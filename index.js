@@ -1,9 +1,15 @@
+import express from 'express';
+
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const fs = require('fs');
 const config = require('./config.json');
 const express = require('express')
 const app = express()
-const port = process.env.PORT || 4000
+const PORT = process.env.PORT; // Render définit cette variable
+
+app.get('/', (_req, res) => res.send('Bot Discord en ligne ✅'));
+
+app.listen(PORT, () => console.log(`Serveur web actif sur le port ${PORT}`));
 
 // Créer le client Discord avec les intents nécessaires
 const client = new Client({
