@@ -1,6 +1,17 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const fs = require('fs');
 const config = require('./config.json');
+const express = require('express')
+const app = express()
+const port = process.env.PORT || 4000
+
+app.get('/', (req, res) => {
+  res.send('Hello World!')
+})
+
+app.listen(port, () => {
+  console.log(`Example app listening on port ${port}`)
+})
 
 // Créer le client Discord avec les intents nécessaires
 const client = new Client({
