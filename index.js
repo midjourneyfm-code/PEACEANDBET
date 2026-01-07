@@ -7,11 +7,6 @@ const app = express()
 const PORT = process.env.PORT; // Render définit cette variable
 const https = require('https');
 
-setInterval(() => {
-  https.get(process.env.RENDER_EXTERNAL_URL || 'https://google.com');
-}, 5 * 60 * 1000);
-
-
 const MONGO_URI = process.env.MONGO_URI;
 
 app.get('/', (_req, res) => res.send('Bot Discord en ligne ✅'));
@@ -1334,3 +1329,16 @@ client.on('error', console.error);
 
 // Connexion du bot
 client.login(config.token);
+
+setInterval(() => {
+  try {
+    https.get(process.env.RENDER_EXTERNAL_URL, res => {
+      console.log('🔁 Ping Render OK');
+    }).on('error', () => {
+      console.log('⚠️ Ping Render échoué');
+    });
+  } catch (err) {
+    console.log('⚠️ Erreur ping');
+  }
+}, 5 * 60 * 1000); // toutes les 5 minutes
+
