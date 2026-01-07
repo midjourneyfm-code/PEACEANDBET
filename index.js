@@ -682,7 +682,7 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [embed] });
   }
 
-  if (command === '!annuler-tout' || command === '!cancelall') {
+if (command === '!annuler-tout' || command === '!cancelall') {
     const member = await message.guild.members.fetch(message.author.id);
     const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
 
@@ -699,20 +699,19 @@ client.on('messageCreate', async (message) => {
     let cancelledCount = 0;
     let refundedAmount = 0;
 
-   for (const bet of activeBets) {
-    if (bet.bettors && Object.keys(bet.bettors).length > 0) {
-      for (const [userId, betData] of Object.entries(bet.bettors)) {
-        const user = await getUser(userId);
-        user.balance += betData.amount;
-        refundedAmount += betData.amount;
-        await user.save();
-    }
-  }
+    for (const bet of activeBets) {
+      if (bet.bettors && Object.keys(bet.bettors).length > 0) {
+        for (const [userId, betData] of Object.entries(bet.bettors)) {
+          const user = await getUser(userId);
+          user.balance += betData.amount;
+          refundedAmount += betData.amount;
+          await user.save();
+        }
+      }
 
-    bet.status = 'cancelled';
-    await bet.save();
-}
-    
+      bet.status = 'cancelled';
+      await bet.save();
+
       try {
         const channel = await client.channels.fetch(bet.channelId);
         const msg = await channel.messages.fetch(bet.messageId);
