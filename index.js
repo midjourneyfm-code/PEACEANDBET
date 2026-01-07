@@ -114,6 +114,7 @@ async function closeBetAutomatically(messageId) {
     
     const lockedEmbed = EmbedBuilder.from(msg.embeds[0]).setColor('#FFA500');
     const fields = msg.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
+    const bettorsCount = bet.bettors ? Object.keys(bet.bettors).length : 0;
     fields.push(
       { name: '📈 Statut', value: '🔒 Clôturé (en attente de validation)', inline: true },
       { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
@@ -181,9 +182,27 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
 
+    if (action === 'validate') {
+      const bet = await Bet.findOne({ messageId: betId });
+    if (!bet) return interaction.reply({ content: 'Pari introuvable', ephemeral: true });
+
+    if (!bet.bettors) bet.bettors = {};
+
+  // logique existante de validation ici
+}
+
+    
     if (action === 'bet') {
       const optionIndex = parseInt(params[0]);
       const bet = await Bet.findOne({ messageId: betId });
+
+       if (!bet.bettors) {
+          bet.bettors = {};
+  }
+
+      if (bet.bettors[interaction.user.id]) {
+      return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
+  }
 
       if (!bet) {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
@@ -219,9 +238,22 @@ client.on('interactionCreate', async (interaction) => {
 
       return interaction.showModal(modal);
     }
+    
+     if (bet.bettors && Object.keys(bet.bettors).length > 0) {
+      for (const [userId, betData] of Object.entries(bet.bettors)) {
+        const user = await getUser(userId);
+        user.balance += betData.amount;
+        await user.save();
+    }
+  }
 
+    bet.status = 'cancelled';
+    await bet.save();
+    
     if (action === 'cancel') {
       const bet = await Bet.findOne({ messageId: betId });
+
+      
 
       if (!bet) {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
@@ -353,7 +385,11 @@ client.on('interactionCreate', async (interaction) => {
       if (isNaN(amount) || amount <= 0) {
         return interaction.reply({ content: '❌ Veuillez entrer un montant valide (nombre entier positif).', ephemeral: true });
       }
-
+      
+      if (!bet.bettors) {
+          bet.bettors = {};
+      }
+      
       if (bet.bettors[interaction.user.id]) {
         return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
       }
@@ -685,11 +721,12 @@ client.on('messageCreate', async (message) => {
     let refundedAmount = 0;
 
     for (const bet of activeBets) {
-      for (const [userId, betData] of Object.entries(bet.bettors)) {
-        const user = await getUser(userId);
-        user.balance += betData.amount;
-        refundedAmount += betData.amount;
-        await user.save();
+      if (bet.bettors && Object.keys(bet.bettors).length > 0) {
+        for (const [userId, betData] of Object.entries(bet.bettors)) {
+          const user = await getUser(userId);
+          user.balance += betData.amount;
+          refundedAmount += betData.amount;
+          await user.save();
       }
 
       bet.status = 'cancelled';
@@ -1218,6 +1255,10 @@ client.on('interactionCreate', async (interaction) => {
   if (action === 'validate') {
     const winningOptions = params.map(p => parseInt(p));
     const bet = await Bet.findOne({ messageId: betId });
+
+    if (!bet.bettors) {
+      return interaction.reply({ content: '⚠️ Aucun parieur sur ce match.', ephemeral: true });
+    }
 
     if (!bet) {
       return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
