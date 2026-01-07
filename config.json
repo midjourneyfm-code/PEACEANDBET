@@ -1,0 +1,31 @@
+{
+  "prefix": "!",
+  "botName": "MonSuperBot",
+  "ownerID": "123456789012345678",
+  "welcomeMessage": "Bienvenue sur le serveur ! Amuse-toi bien !",
+  "goodbyeMessage": "Au revoir ! À bientôt !",
+  "roles": {
+    "admin": "Admin",
+    "mod": "Modérateur",
+    "member": "Membre"
+  },
+  "levels": {
+    "xpPerMessage": 10,
+    "maxLevel": 50,
+    "levelMultiplier": 1.5
+  },
+  "commands": {
+    "ping": {
+      "description": "Répond pong",
+      "usage": "!ping"
+    },
+    "userinfo": {
+      "description": "Affiche les infos d’un membre",
+      "usage": "!userinfo @membre"
+    }
+  },
+  "somePublicData": {
+    "version": "1.0.0",
+    "supportServer": "https://discord.gg/xxxx"
+  }
+}

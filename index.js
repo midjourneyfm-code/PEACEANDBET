@@ -1,12 +1,20 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const fs = require('fs');
 const config = require('./config.json');
+const express = require('express');
+const mongoose = require('mongoose');
 const app = express()
 const PORT = process.env.PORT; // Render définit cette variable
+
+const MONGO_URI = process.env.MONGO_URI;
 
 app.get('/', (_req, res) => res.send('Bot Discord en ligne ✅'));
 
 app.listen(PORT, () => console.log(`Serveur web actif sur le port ${PORT}`));
+
+mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('MongoDB connecté ✅'))
+  .catch(err => console.error('Erreur MongoDB:', err));
 
 // Créer le client Discord avec les intents nécessaires
 const client = new Client({
