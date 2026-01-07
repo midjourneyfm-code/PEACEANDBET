@@ -3,6 +3,7 @@ import express from 'express';
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const fs = require('fs');
 const config = require('./config.json');
+const express = require('express');
 const app = express()
 const PORT = process.env.PORT; // Render définit cette variable
 
