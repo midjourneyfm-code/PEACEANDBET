@@ -1388,7 +1388,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
     await interaction.reply(distributionText);
   }
-});
+);
 
 client.on('error', console.error);
 
