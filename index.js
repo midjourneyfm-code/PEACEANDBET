@@ -709,8 +709,8 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  bet.status = 'cancelled';
-  await bet.save();
+    bet.status = 'cancelled';
+    await bet.save();
 }
     
       try {
@@ -1227,6 +1227,43 @@ client.on('messageCreate', async (message) => {
   }
 });
 
+  if (command === '!debug-pari') {
+    const member = await message.guild.members.fetch(message.author.id);
+    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+    if (!hasRole) {
+      return message.reply('❌ Rôle requis.');
+    }
+
+      const betMessageId = args[1];
+    if (!betMessageId) {
+      return message.reply('Usage: `!debug-pari [messageId]`');
+    }
+
+      const bet = await Bet.findOne({ messageId: betMessageId });
+    if (!bet) {
+      return message.reply('❌ Pari introuvable.');
+    }
+
+      const bettorsArray = Object.entries(bet.bettors);
+    
+      const embed = new EmbedBuilder()
+      .setColor('#FFA500')
+      .setTitle('🔍 Debug du Pari')
+      .addFields(
+        { name: 'ID', value: betMessageId },
+        { name: 'Statut', value: bet.status },
+        { name: 'Parieurs dans DB', value: `${bettorsArray.length}` },
+        { name: 'Total Pool', value: `${bet.totalPool}€` },
+        { name: 'Détails', value: bettorsArray.length > 0 ? 
+          bettorsArray.map(([id, data]) => `<@${id}>: ${data.amount}€ sur option ${data.option + 1}`).join('\n') 
+          : 'Aucun parieur' 
+        }
+      );
+
+    message.reply({ embeds: [embed] });
+  }
+
 // Gestion du bouton de validation
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
@@ -1353,43 +1390,6 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.reply(distributionText);
   }
 });
-
-    if (command === '!debug-pari') {
-      const member = await message.guild.members.fetch(message.author.id);
-      const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
-
-    if (!hasRole) {
-      return message.reply('❌ Rôle requis.');
-    }
-
-      const betMessageId = args[1];
-    if (!betMessageId) {
-      return message.reply('Usage: `!debug-pari [messageId]`');
-    }
-
-      const bet = await Bet.findOne({ messageId: betMessageId });
-    if (!bet) {
-      return message.reply('❌ Pari introuvable.');
-    }
-
-      const bettorsArray = Object.entries(bet.bettors);
-    
-      const embed = new EmbedBuilder()
-      .setColor('#FFA500')
-      .setTitle('🔍 Debug du Pari')
-      .addFields(
-        { name: 'ID', value: betMessageId },
-        { name: 'Statut', value: bet.status },
-        { name: 'Parieurs dans DB', value: `${bettorsArray.length}` },
-        { name: 'Total Pool', value: `${bet.totalPool}€` },
-        { name: 'Détails', value: bettorsArray.length > 0 ? 
-          bettorsArray.map(([id, data]) => `<@${id}>: ${data.amount}€ sur option ${data.option + 1}`).join('\n') 
-          : 'Aucun parieur' 
-        }
-      );
-
-    message.reply({ embeds: [embed] });
-  }
 
 client.on('error', console.error);
 
