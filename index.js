@@ -2,8 +2,10 @@ const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder
 const fs = require('fs');
 const config = require('./config.json');
 const express = require('express');
+const mongoose = require('mongoose');
 const app = express()
 const PORT = process.env.PORT; // Render définit cette variable
+
 const MONGO_URI = process.env.MONGO_URI;
 
 app.get('/', (_req, res) => res.send('Bot Discord en ligne ✅'));
