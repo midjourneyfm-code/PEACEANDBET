@@ -704,7 +704,8 @@ client.on('messageCreate', async (message) => {
           refundedAmount += betData.amount;
           await user.save();
       }
-
+    }
+      
       bet.status = 'cancelled';
       await bet.save();
 
