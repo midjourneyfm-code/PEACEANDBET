@@ -1224,7 +1224,6 @@ if (command === '!annuler-tout' || command === '!cancelall') {
 
     message.reply({ embeds: [helpEmbed] });
   }
-});
 
   if (command === '!debug-pari') {
     const member = await message.guild.members.fetch(message.author.id);
@@ -1262,6 +1261,7 @@ if (command === '!annuler-tout' || command === '!cancelall') {
 
     message.reply({ embeds: [embed] });
   }
+});
 
 // Gestion du bouton de validation
 client.on('interactionCreate', async (interaction) => {
