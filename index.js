@@ -217,7 +217,7 @@ client.on('interactionCreate', async (interaction) => {
       const row = new ActionRowBuilder().addComponents(amountInput);
       modal.addComponents(row);
 
-      await interaction.showModal(modal);
+      return interaction.showModal(modal);
     }
 
     if (action === 'cancel') {
