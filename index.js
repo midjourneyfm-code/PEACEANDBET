@@ -5,6 +5,12 @@ const express = require('express');
 const mongoose = require('mongoose');
 const app = express()
 const PORT = process.env.PORT; // Render définit cette variable
+const https = require('https');
+
+setInterval(() => {
+  https.get(process.env.RENDER_EXTERNAL_URL || 'https://google.com');
+}, 5 * 60 * 1000);
+
 
 const MONGO_URI = process.env.MONGO_URI;
 
