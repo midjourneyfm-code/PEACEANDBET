@@ -118,7 +118,7 @@ async function closeBetAutomatically(messageId) {
     fields.push(
       { name: '📈 Statut', value: '🔒 Clôturé (en attente de validation)', inline: true },
       { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
-      { name: '👥 Parieurs', value: `${Object.keys(bet.bettors).length}`, inline: true }
+      { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
     );
     lockedEmbed.setFields(fields);
     
@@ -181,31 +181,21 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
-
-    if (action === 'validate') {
-      const bet = await Bet.findOne({ messageId: betId });
-    if (!bet) return interaction.reply({ content: 'Pari introuvable', ephemeral: true });
-
-    if (!bet.bettors) bet.bettors = {};
-
-  // logique existante de validation ici
-}
-
     
     if (action === 'bet') {
       const optionIndex = parseInt(params[0]);
       const bet = await Bet.findOne({ messageId: betId });
 
-       if (!bet.bettors) {
-          bet.bettors = {};
-  }
-
-      if (bet.bettors[interaction.user.id]) {
-      return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
-  }
-
       if (!bet) {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
+      }
+
+      if (!bet.bettors) {
+        bet.bettors = {};
+      }
+
+      if (bet.bettors[interaction.user.id]) {
+        return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
       }
 
       if (bet.status === 'locked') {
@@ -214,10 +204,6 @@ client.on('interactionCreate', async (interaction) => {
 
       if (bet.status !== 'open') {
         return interaction.reply({ content: '❌ Ce pari est fermé.', ephemeral: true });
-      }
-
-      if (bet.bettors[interaction.user.id]) {
-        return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
       }
 
       const modal = new ModalBuilder()
@@ -239,21 +225,8 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.showModal(modal);
     }
     
-     if (bet.bettors && Object.keys(bet.bettors).length > 0) {
-      for (const [userId, betData] of Object.entries(bet.bettors)) {
-        const user = await getUser(userId);
-        user.balance += betData.amount;
-        await user.save();
-    }
-  }
-
-    bet.status = 'cancelled';
-    await bet.save();
-    
     if (action === 'cancel') {
       const bet = await Bet.findOne({ messageId: betId });
-
-      
 
       if (!bet) {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
@@ -274,10 +247,13 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
       }
 
-      for (const [userId, betData] of Object.entries(bet.bettors)) {
-        const user = await getUser(userId);
-        user.balance += betData.amount;
-        await user.save();
+      // Rembourser les parieurs
+      if (bet.bettors && Object.keys(bet.bettors).length > 0) {
+        for (const [userId, betData] of Object.entries(bet.bettors)) {
+          const user = await getUser(userId);
+          user.balance += betData.amount;
+          await user.save();
+        }
       }
 
       bet.status = 'cancelled';
@@ -387,7 +363,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       
       if (!bet.bettors) {
-          bet.bettors = {};
+        bet.bettors = {};
       }
       
       if (bet.bettors[interaction.user.id]) {
@@ -586,7 +562,7 @@ client.on('messageCreate', async (message) => {
     const activeBets = await Bet.find({ status: { $in: ['open', 'locked'] } });
 
     if (activeBets.length === 0) {
-      return message.reply('📭 Aucun pari en cours pour le moment.');
+      return message.reply('🔭 Aucun pari en cours pour le moment.');
     }
 
     const embed = new EmbedBuilder()
@@ -598,7 +574,7 @@ client.on('messageCreate', async (message) => {
     for (const bet of activeBets) {
       const statusEmoji = bet.status === 'locked' ? '🔒' : '🟢';
       const statusText = bet.status === 'locked' ? 'Clôturé' : 'Ouvert';
-      const bettorsCount = Object.keys(bet.bettors).length;
+      const bettorsCount = bet.bettors ? Object.keys(bet.bettors).length : 0;
       
       const optionsList = bet.options.map((opt, i) => `${i + 1}. ${opt.name} (${bet.initialOdds[i]}x)`).join(', ');
       
