@@ -1,0 +1,16 @@
+{
+  "name": "discord-betting-bot",
+  "version": "1.0.0",
+  "description": "Bot Discord pour créer et gérer des paris",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": ["discord", "bot", "betting"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+	"express": "^5.2.1"
+  }}
+}

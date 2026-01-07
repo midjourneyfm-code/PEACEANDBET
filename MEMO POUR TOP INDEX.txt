@@ -1,0 +1,7 @@
+
+const app = express()
+const PORT = process.env.PORT; // Render définit cette variable
+
+app.get('/', (_req, res) => res.send('Bot Discord en ligne ✅'));
+
+app.listen(PORT, () => console.log(`Serveur web actif sur le port ${PORT}`));
