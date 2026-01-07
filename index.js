@@ -1233,13 +1233,13 @@ client.on('interactionCreate', async (interaction) => {
     const winningOptions = params.map(p => parseInt(p));
     const bet = await Bet.findOne({ messageId: betId });
 
-    if (!bet.bettors) {
-      return interaction.reply({ content: '⚠️ Aucun parieur sur ce match.', ephemeral: true });
-    }
-
     if (!bet) {
       return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
-    }
+  }
+
+    if (!bet.bettors || Object.keys(bet.bettors).length === 0) {
+      return interaction.reply({ content: '⚠️ Aucun parieur sur ce match.', ephemeral: true });
+  }
 
     const member = await interaction.guild.members.fetch(interaction.user.id);
     const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
