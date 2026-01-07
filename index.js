@@ -249,7 +249,7 @@ client.on('interactionCreate', async (interaction) => {
 
       // Rembourser les parieurs
       if (bet.bettors && Object.keys(bet.bettors).length > 0) {
-        for (const [userId, betData] of Object.entries(bet.bettors)) {
+          await user.save();
           const user = await getUser(userId);
           user.balance += betData.amount;
           await user.save();
@@ -387,6 +387,7 @@ client.on('interactionCreate', async (interaction) => {
       };
       
       user.balance -= amount;
+      bet.markModified('bettors');
       bet.totalPool += amount;
       await user.save();
       await bet.save();
@@ -395,7 +396,8 @@ client.on('interactionCreate', async (interaction) => {
         const channel = await client.channels.fetch(bet.channelId);
         const betMessage = await channel.messages.fetch(betId);
         
-        const bettorsCount = Object.keys(bet.bettors).length;
+        const updatedBet = await Bet.findOne({ messageId: betId });
+        const bettorsCount = Object.keys(updatedBet.bettors).length;
         
         const fields = betMessage.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
         fields.push(
@@ -698,7 +700,7 @@ client.on('messageCreate', async (message) => {
 
     for (const bet of activeBets) {
       if (bet.bettors && Object.keys(bet.bettors).length > 0) {
-        for (const [userId, betData] of Object.entries(bet.bettors)) {
+          await user.save();
           const user = await getUser(userId);
           user.balance += betData.amount;
           refundedAmount += betData.amount;
@@ -1263,7 +1265,7 @@ client.on('interactionCreate', async (interaction) => {
     if (winners.length === 0) {
       await interaction.reply('⚠️ Aucun gagnant pour ce pari. Les mises sont perdues.');
       
-      for (const [userId, betData] of Object.entries(bet.bettors)) {
+        await user.save();
         const user = await getUser(userId);
         user.stats.totalBets++;
         user.stats.lostBets++;
@@ -1294,7 +1296,7 @@ client.on('interactionCreate', async (interaction) => {
     distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
 
     // CORRECTION: Winrate pour les perdants
-    for (const [userId, betData] of Object.entries(bet.bettors)) {
+      await user.save();
       const user = await getUser(userId);
       user.stats.totalBets++;
       
@@ -1350,6 +1352,43 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.reply(distributionText);
   }
 });
+
+    if (command === '!debug-pari') {
+      const member = await message.guild.members.fetch(message.author.id);
+      const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+    if (!hasRole) {
+      return message.reply('❌ Rôle requis.');
+    }
+
+      const betMessageId = args[1];
+    if (!betMessageId) {
+      return message.reply('Usage: `!debug-pari [messageId]`');
+    }
+
+      const bet = await Bet.findOne({ messageId: betMessageId });
+    if (!bet) {
+      return message.reply('❌ Pari introuvable.');
+    }
+
+      const bettorsArray = Object.entries(bet.bettors);
+    
+      const embed = new EmbedBuilder()
+      .setColor('#FFA500')
+      .setTitle('🔍 Debug du Pari')
+      .addFields(
+        { name: 'ID', value: betMessageId },
+        { name: 'Statut', value: bet.status },
+        { name: 'Parieurs dans DB', value: `${bettorsArray.length}` },
+        { name: 'Total Pool', value: `${bet.totalPool}€` },
+        { name: 'Détails', value: bettorsArray.length > 0 ? 
+          bettorsArray.map(([id, data]) => `<@${id}>: ${data.amount}€ sur option ${data.option + 1}`).join('\n') 
+          : 'Aucun parieur' 
+        }
+      );
+
+    message.reply({ embeds: [embed] });
+  }
 
 client.on('error', console.error);
 
