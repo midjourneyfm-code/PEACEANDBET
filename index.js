@@ -23,6 +23,7 @@ const client = new Client({
 let bets = {}; // { messageId: { question, options: [], bettors: {} } }
 let userBalances = {}; // { userId: balance }
 let userStats = {}; // { userId: { totalBets, wonBets, lostBets } }
+let userHistory = {}; // { userId: [{ betId, question, option, amount, result, timestamp }] }
 
 // Nom du rôle autorisé à créer des paris
 const BETTING_CREATOR_ROLE = 'Créateur de Paris';
@@ -39,6 +40,9 @@ function loadData() {
     if (fs.existsSync('./stats.json')) {
       userStats = JSON.parse(fs.readFileSync('./stats.json', 'utf8'));
     }
+    if (fs.existsSync('./history.json')) {
+      userHistory = JSON.parse(fs.readFileSync('./history.json', 'utf8'));
+    }
   } catch (error) {
     console.error('Erreur lors du chargement des données:', error);
   }
@@ -50,6 +54,7 @@ function saveData() {
     fs.writeFileSync('./bets.json', JSON.stringify(bets, null, 2));
     fs.writeFileSync('./balances.json', JSON.stringify(userBalances, null, 2));
     fs.writeFileSync('./stats.json', JSON.stringify(userStats, null, 2));
+    fs.writeFileSync('./history.json', JSON.stringify(userHistory, null, 2));
   } catch (error) {
     console.error('Erreur lors de la sauvegarde des données:', error);
   }
@@ -130,8 +135,17 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
       }
 
+      if (bet.status === 'locked') {
+        return interaction.reply({ content: '❌ Les paris sont clôturés. Le match est en cours !', ephemeral: true });
+      }
+
       if (bet.status !== 'open') {
         return interaction.reply({ content: '❌ Ce pari est fermé.', ephemeral: true });
+      }
+
+      // Vérifier si l'utilisateur a déjà parié
+      if (bet.bettors[interaction.user.id]) {
+        return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
       }
 
       const currentOdds = bet.initialOdds[optionIndex];
@@ -210,6 +224,9 @@ client.on('interactionCreate', async (interaction) => {
         const stats = getStats(userId);
         stats.totalBets++;
         
+        // Initialiser l'historique si nécessaire
+        if (!userHistory[userId]) userHistory[userId] = [];
+        
         if (winningOptions.includes(betData.option)) {
           // Gagnant
           stats.wonBets++;
@@ -219,9 +236,31 @@ client.on('interactionCreate', async (interaction) => {
           
           userBalances[userId] = (userBalances[userId] || 0) + winnings;
           distributionText += `• <@${userId}> : Misé ${betData.amount}€ (cote ${odds}x) → Gagné **${winnings}€** (profit: +${profit}€)\n`;
+          
+          // Ajouter à l'historique
+          userHistory[userId].push({
+            betId,
+            question: bet.question,
+            option: bet.options[betData.option].name,
+            amount: betData.amount,
+            winnings: winnings,
+            result: 'won',
+            timestamp: Date.now()
+          });
         } else {
           // Perdant
           stats.lostBets++;
+          
+          // Ajouter à l'historique
+          userHistory[userId].push({
+            betId,
+            question: bet.question,
+            option: bet.options[betData.option].name,
+            amount: betData.amount,
+            winnings: 0,
+            result: 'lost',
+            timestamp: Date.now()
+          });
         }
       });
 
@@ -298,7 +337,14 @@ client.on('interactionCreate', async (interaction) => {
       let sortLabel;
       
       if (sortBy === 'winrate') {
-        sortedUsers = users.sort((a, b) => b.winrate - a.winrate);
+        // Pour le winrate, filtrer ceux qui ont au moins 1 pari
+        sortedUsers = users.filter(u => u.stats.totalBets > 0).sort((a, b) => {
+          // Trier par winrate d'abord, puis par nombre de paris en cas d'égalité
+          if (b.winrate !== a.winrate) {
+            return b.winrate - a.winrate;
+          }
+          return b.stats.totalBets - a.stats.totalBets;
+        });
         sortEmoji = '📊';
         sortLabel = 'Winrate';
       } else {
@@ -315,7 +361,7 @@ client.on('interactionCreate', async (interaction) => {
       for (let i = 0; i < top10.length; i++) {
         const user = top10[i];
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
-        description += `${medal} <@${user.userId}> — ${user.balance}€ (${user.winrate}% winrate)\n`;
+        description += `${medal} <@${user.userId}> — ${user.balance}€ (${user.winrate}% winrate, ${user.stats.totalBets} paris)\n`;
       }
 
       const embed = new EmbedBuilder()
@@ -360,6 +406,10 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
       }
 
+      if (bet.status === 'locked') {
+        return interaction.reply({ content: '❌ Les paris sont clôturés. Le match est en cours !', ephemeral: true });
+      }
+
       if (bet.status !== 'open') {
         return interaction.reply({ content: '❌ Ce pari est fermé.', ephemeral: true });
       }
@@ -368,17 +418,15 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Veuillez entrer un montant valide (nombre entier positif).', ephemeral: true });
       }
 
+      // Vérifier si l'utilisateur a déjà parié (double sécurité)
+      if (bet.bettors[interaction.user.id]) {
+        return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
+      }
+
       // Vérifier le solde
       const balance = getBalance(interaction.user.id);
       if (balance < amount) {
         return interaction.reply({ content: `❌ Solde insuffisant. Vous avez **${balance}€**.`, ephemeral: true });
-      }
-
-      // Si l'utilisateur a déjà parié, rembourser l'ancien pari
-      if (bet.bettors[interaction.user.id]) {
-        const oldBet = bet.bettors[interaction.user.id];
-        userBalances[interaction.user.id] += oldBet.amount;
-        bet.totalPool -= oldBet.amount;
       }
 
       // Placer le pari
@@ -406,13 +454,18 @@ client.on('interactionCreate', async (interaction) => {
         
         const updatedEmbed = EmbedBuilder.from(betMessage.embeds[0])
           .setFields(
-            { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
-            { name: '📈 Statut', value: '🟢 En cours', inline: true },
-            { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
-            { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
+            betMessage.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name)).concat([
+              { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
+              { name: '📈 Statut', value: '🟢 En cours', inline: true },
+              { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
+              { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
+            ])
           );
 
         await betMessage.edit({ embeds: [updatedEmbed] });
+        
+        // Annonce publique du pari
+        await betMessage.reply(`💰 **<@${interaction.user.id}>** a parié **${amount}€** sur **${bet.options[optIndex].name}** (cote ${odds}x) — Gain potentiel : **${potentialWin}€**`);
       } catch (error) {
         console.error('Erreur lors de la mise à jour du message:', error);
       }
@@ -481,7 +534,14 @@ client.on('messageCreate', async (message) => {
     let sortLabel;
     
     if (sortBy === 'winrate') {
-      sortedUsers = users.sort((a, b) => b.winrate - a.winrate);
+      // Pour le winrate, filtrer ceux qui ont au moins 1 pari
+      sortedUsers = users.filter(u => u.stats.totalBets > 0).sort((a, b) => {
+        // Trier par winrate d'abord, puis par nombre de paris en cas d'égalité
+        if (b.winrate !== a.winrate) {
+          return b.winrate - a.winrate;
+        }
+        return b.stats.totalBets - a.stats.totalBets;
+      });
       sortEmoji = '📊';
       sortLabel = 'Winrate';
     } else {
@@ -498,7 +558,7 @@ client.on('messageCreate', async (message) => {
     for (let i = 0; i < top10.length; i++) {
       const user = top10[i];
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
-      description += `${medal} <@${user.userId}> — ${user.balance}€ (${user.winrate}% winrate)\n`;
+      description += `${medal} <@${user.userId}> — ${user.balance}€ (${user.winrate}% winrate, ${user.stats.totalBets} paris)\n`;
     }
 
     const embed = new EmbedBuilder()
@@ -571,6 +631,80 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [embed] });
   }
 
+  // Commande pour voir les paris en cours
+  if (command === '!paris-en-cours' || command === '!paris' || command === '!activebets') {
+    const activeBets = Object.entries(bets).filter(([id, bet]) => bet.status === 'open' || bet.status === 'locked');
+
+    if (activeBets.length === 0) {
+      return message.reply('📭 Aucun pari en cours pour le moment.');
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor('#FFD700')
+      .setTitle('📊 Paris En Cours')
+      .setDescription(`Il y a actuellement **${activeBets.length}** pari(s) actif(s) :\n\n`)
+      .setTimestamp();
+
+    for (const [betId, bet] of activeBets) {
+      const statusEmoji = bet.status === 'locked' ? '🔒' : '🟢';
+      const statusText = bet.status === 'locked' ? 'Clôturé' : 'Ouvert';
+      const bettorsCount = Object.keys(bet.bettors).length;
+      
+      let fieldValue = `**ID:** \`${betId}\`\n**Statut:** ${statusEmoji} ${statusText}\n**Parieurs:** ${bettorsCount}\n**Cagnotte:** ${bet.totalPool}€`;
+      
+      if (bet.closingTime) {
+        fieldValue += `\n**Clôture:** <t:${Math.floor(bet.closingTime / 1000)}:R>`;
+      }
+      
+      embed.addFields({
+        name: bet.question,
+        value: fieldValue,
+        inline: false
+      });
+    }
+
+    message.reply({ embeds: [embed] });
+  }
+
+  // Commande pour voir le profil d'un membre
+  if (command === '!profil' || command === '!profile' || command === '!stats') {
+    const targetUser = message.mentions.users.first() || message.author;
+    const balance = getBalance(targetUser.id);
+    const stats = getStats(targetUser.id);
+    const winrate = calculateWinrate(targetUser.id);
+    
+    // Récupérer l'historique
+    const history = userHistory[targetUser.id] || [];
+    const recentHistory = history.slice(-5).reverse(); // 5 derniers paris
+
+    const embed = new EmbedBuilder()
+      .setColor('#FFD700')
+      .setTitle(`📊 Profil de ${targetUser.username}`)
+      .setThumbnail(targetUser.displayAvatarURL())
+      .addFields(
+        { name: '💵 Solde', value: `**${balance}€**`, inline: true },
+        { name: '📊 Winrate', value: `**${winrate}%**`, inline: true },
+        { name: '🎲 Paris totaux', value: `${stats.totalBets}`, inline: true },
+        { name: '✅ Gagnés', value: `${stats.wonBets}`, inline: true },
+        { name: '❌ Perdus', value: `${stats.lostBets}`, inline: true },
+        { name: '⚖️ Ratio', value: `${stats.wonBets}/${stats.lostBets}`, inline: true }
+      )
+      .setTimestamp();
+
+    // Ajouter l'historique récent si disponible
+    if (recentHistory.length > 0) {
+      let historyText = '';
+      for (const h of recentHistory) {
+        const resultEmoji = h.result === 'won' ? '✅' : '❌';
+        const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
+        historyText += `${resultEmoji} **${h.question}** — ${h.option} (${h.amount}€) ${profit}\n`;
+      }
+      embed.addFields({ name: '📜 Historique Récent', value: historyText || 'Aucun historique', inline: false });
+    }
+
+    message.reply({ embeds: [embed] });
+  }
+
   // Commande pour créer un pari (AVEC VÉRIFICATION DU RÔLE)
   if (command === '!creer-pari' || command === '!createbet') {
     // Vérifier si l'utilisateur a le rôle requis
@@ -581,16 +715,26 @@ client.on('messageCreate', async (message) => {
       return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris.\n\n_Demandez à un administrateur de vous donner ce rôle._`);
     }
 
-    // Format: !creer-pari Question ? | Option 1:1.5 | Option 2:2.5 | Option 3:5
+    // Format: !creer-pari Question ? | Option 1:1.5 | Option 2:2.5 | Option 3:5 | 2h30
     const content = message.content.slice(command.length).trim();
     
     if (!content.includes('|')) {
-      return message.reply('❌ Format incorrect. Utilisez : `!creer-pari Question ? | Option 1:cote1 | Option 2:cote2`\n\nExemple: `!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | Nul:4.5`');
+      return message.reply('❌ Format incorrect. Utilisez : `!creer-pari Question ? | Option 1:cote1 | Option 2:cote2 | durée`\n\nExemple: `!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | Nul:4.5 | 2h30`\nDurée optionnelle (ex: 1h, 30m, 2h30)');
     }
 
     const parts = content.split('|').map(p => p.trim());
     const question = parts[0];
-    const optionsRaw = parts.slice(1);
+    
+    // La dernière partie peut être soit une option, soit une durée
+    let closingTimeStr = null;
+    let optionsRaw = parts.slice(1);
+    
+    // Vérifier si la dernière partie est une durée (format: 1h, 30m, 2h30, etc)
+    const lastPart = parts[parts.length - 1];
+    if (/^\d+[hm](\d+[m])?$/i.test(lastPart.trim())) {
+      closingTimeStr = lastPart;
+      optionsRaw = parts.slice(1, -1);
+    }
 
     if (optionsRaw.length < 2 || optionsRaw.length > 10) {
       return message.reply('❌ Vous devez avoir entre 2 et 10 options.');
@@ -616,6 +760,24 @@ client.on('messageCreate', async (message) => {
       odds.push(oddsValue);
     }
 
+    // Calculer l'heure de clôture
+    let closingTime = null;
+    let closingTimestamp = null;
+    
+    if (closingTimeStr) {
+      const hoursMatch = closingTimeStr.match(/(\d+)h/i);
+      const minutesMatch = closingTimeStr.match(/(\d+)m/i);
+      
+      let totalMinutes = 0;
+      if (hoursMatch) totalMinutes += parseInt(hoursMatch[1]) * 60;
+      if (minutesMatch) totalMinutes += parseInt(minutesMatch[1]);
+      
+      if (totalMinutes > 0) {
+        closingTimestamp = Date.now() + (totalMinutes * 60 * 1000);
+        closingTime = new Date(closingTimestamp);
+      }
+    }
+
     // Créer l'embed avec les cotes
     const optionsText = options.map((opt, i) => 
       `**${i + 1}.** ${opt.name} — Cote: **${opt.odds}x**`
@@ -633,6 +795,15 @@ client.on('messageCreate', async (message) => {
       )
       .setFooter({ text: `Créé par ${message.author.tag}` })
       .setTimestamp();
+
+    // Ajouter l'heure de clôture si définie
+    if (closingTime) {
+      embed.addFields({
+        name: '⏰ Clôture des paris',
+        value: `<t:${Math.floor(closingTimestamp / 1000)}:R> (<t:${Math.floor(closingTimestamp / 1000)}:f>)`,
+        inline: false
+      });
+    }
 
     // Créer les boutons pour chaque option (max 5 par ligne)
     const rows = [];
@@ -710,11 +881,74 @@ client.on('messageCreate', async (message) => {
       channelId: message.channel.id,
       totalPool: 0,
       status: 'open',
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      closingTime: closingTimestamp,
+      reminderSent: false
     };
     saveData();
 
-    message.reply(`✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``);
+    let replyText = `✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``;
+    
+    if (closingTime) {
+      replyText += `\n\n⏰ Les paris seront automatiquement clôturés <t:${Math.floor(closingTimestamp / 1000)}:R>`;
+      
+      // Programmer la clôture automatique
+      const timeUntilClosing = closingTimestamp - Date.now();
+      if (timeUntilClosing > 0) {
+        setTimeout(async () => {
+          const bet = bets[betMessage.id];
+          if (bet && bet.status === 'open') {
+            bet.status = 'locked';
+            saveData();
+            
+            try {
+              const channel = await client.channels.fetch(bet.channelId);
+              const msg = await channel.messages.fetch(betMessage.id);
+              
+              const lockedEmbed = EmbedBuilder.from(msg.embeds[0])
+                .setColor('#FFA500')
+                .setFields(
+                  msg.embeds[0].fields.filter(f => f.name !== '📈 Statut').concat([
+                    { name: '📈 Statut', value: '🔒 Clôturé (en attente de validation)', inline: true },
+                    { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
+                    { name: '👥 Parieurs', value: `${Object.keys(bet.bettors).length}`, inline: true }
+                  ])
+                );
+              
+              // Retirer les boutons de paris
+              const lockedRows = msg.components.slice(-1); // Garder seulement le bouton admin
+              await msg.edit({ embeds: [lockedEmbed], components: lockedRows });
+              
+              await msg.reply('🔒 **Les paris sont maintenant clôturés !** Le match est en cours. En attente de validation du résultat...');
+            } catch (error) {
+              console.error('Erreur lors de la clôture automatique:', error);
+            }
+          }
+        }, timeUntilClosing);
+        
+        // Programmer le rappel 1h avant
+        const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
+        if (oneHourBefore > 0) {
+          setTimeout(async () => {
+            const bet = bets[betMessage.id];
+            if (bet && bet.status === 'open' && !bet.reminderSent) {
+              bet.reminderSent = true;
+              saveData();
+              
+              try {
+                const channel = await client.channels.fetch(bet.channelId);
+                const msg = await channel.messages.fetch(betMessage.id);
+                await msg.reply('⏰ **Rappel** : Plus qu\'**1 heure** avant la clôture des paris ! Placez vos mises maintenant !');
+              } catch (error) {
+                console.error('Erreur lors de l\'envoi du rappel:', error);
+              }
+            }
+          }, oneHourBefore);
+        }
+      }
+    }
+    
+    message.reply(replyText);
   }
 
   // Commande pour valider un pari
@@ -782,13 +1016,18 @@ client.on('messageCreate', async (message) => {
       .setTitle('📚 Aide - Bot de Paris avec Cotes')
       .setDescription('Voici toutes les commandes disponibles :')
       .addFields(
+        { name: '👤 Commandes Utilisateur', value: '\u200b', inline: false },
         { name: '!solde', value: 'Affiche votre solde, winrate et statistiques' },
-        { name: '!classement', value: 'Affiche le classement des joueurs\nAliases: `!leaderboard`, `!top`\nUtilisez les boutons pour trier par solde ou winrate' },
-        { name: '!creer-pari', value: `**[Rôle requis: ${BETTING_CREATOR_ROLE}]**\nCrée un nouveau pari avec cotes\nFormat : \`!creer-pari Question ? | Option1:cote1 | Option2:cote2\`\nExemple: \`!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | Nul:4.5\`` },
-        { name: '💰 Parier', value: '**Cliquez sur le bouton** de l\'option de votre choix, puis entrez le montant dans la fenêtre qui s\'ouvre !' },
-        { name: '!valider [id] [options]', value: `**[Rôle requis: ${BETTING_CREATOR_ROLE}]**\nValide un pari (créateur uniquement)\nEx: \`!valider 123456789 1 3\` pour valider les options 1 et 3` },
-        { name: '!modifier-solde @user montant', value: `**[Rôle requis: ${BETTING_CREATOR_ROLE}]**\nModifie le solde d'un utilisateur\nExemple: \`!modifier-solde @Jean 500\`` },
-        { name: '📊 Cotes', value: 'Chaque option a une cote qui détermine vos gains.\nGain = Mise × Cote\nExemple: 50€ × 2.5 = 125€ de gain' }
+        { name: '!classement', value: 'Classement des joueurs (par solde ou winrate)' },
+        { name: '!profil [@user]', value: 'Affiche le profil complet et l\'historique d\'un joueur' },
+        { name: '!paris-en-cours', value: 'Liste tous les paris actifs avec leur ID' },
+        { name: '💰 Parier', value: 'Cliquez sur le bouton, entrez le montant dans la fenêtre\n**⚠️ Vous ne pouvez parier qu\'une seule fois par pari !**' },
+        { name: '⚙️ Commandes Admin', value: `(Rôle requis: **${BETTING_CREATOR_ROLE}**)`, inline: false },
+        { name: '!creer-pari', value: 'Format : `!creer-pari Question ? | Option1:cote1 | Option2:cote2 | durée`\nExemple: `!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | 2h30`\nDurée optionnelle (ex: 1h, 30m, 2h30)' },
+        { name: '!valider [id] [options]', value: 'Valide un pari\nEx: `!valider 123456789 1 3`' },
+        { name: '!modifier-solde @user montant', value: 'Modifie le solde d\'un utilisateur\nEx: `!modifier-solde @Jean 500`' },
+        { name: '⏰ Clôture automatique', value: 'Les paris se ferment automatiquement à l\'heure définie\nRappel 1h avant la clôture\nLe pari reste ouvert pour validation après clôture' },
+        { name: '📊 Cotes', value: 'Gain = Mise × Cote\nExemple: 50€ × 2.5 = 125€ de gain' }
       )
       .setFooter({ text: 'Bot de Paris Discord' });
 
