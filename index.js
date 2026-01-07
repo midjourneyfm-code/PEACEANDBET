@@ -249,12 +249,13 @@ client.on('interactionCreate', async (interaction) => {
 
       // Rembourser les parieurs
       if (bet.bettors && Object.keys(bet.bettors).length > 0) {
-          await user.save();
+        for (const [userId, betData] of Object.entries(bet.bettors)) {
           const user = await getUser(userId);
           user.balance += betData.amount;
           await user.save();
-        }
-      }
+  }
+}
+
 
       bet.status = 'cancelled';
       await bet.save();
@@ -698,19 +699,20 @@ client.on('messageCreate', async (message) => {
     let cancelledCount = 0;
     let refundedAmount = 0;
 
-    for (const bet of activeBets) {
-      if (bet.bettors && Object.keys(bet.bettors).length > 0) {
-          await user.save();
-          const user = await getUser(userId);
-          user.balance += betData.amount;
-          refundedAmount += betData.amount;
-          await user.save();
-      }
+   for (const bet of activeBets) {
+    if (bet.bettors && Object.keys(bet.bettors).length > 0) {
+      for (const [userId, betData] of Object.entries(bet.bettors)) {
+        const user = await getUser(userId);
+        user.balance += betData.amount;
+        refundedAmount += betData.amount;
+        await user.save();
     }
-      
-      bet.status = 'cancelled';
-      await bet.save();
+  }
 
+  bet.status = 'cancelled';
+  await bet.save();
+}
+    
       try {
         const channel = await client.channels.fetch(bet.channelId);
         const msg = await channel.messages.fetch(bet.messageId);
@@ -1296,7 +1298,7 @@ client.on('interactionCreate', async (interaction) => {
     distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
 
     // CORRECTION: Winrate pour les perdants
-      await user.save();
+    for (const [userId, betData] of Object.entries(bet.bettors)) {
       const user = await getUser(userId);
       user.stats.totalBets++;
       
@@ -1305,7 +1307,6 @@ client.on('interactionCreate', async (interaction) => {
         const odds = bet.initialOdds[betData.option];
         const winnings = calculatePotentialWin(betData.amount, odds);
         const profit = winnings - betData.amount;
-        
         user.balance += winnings;
         distributionText += `• <@${userId}> : Misé ${betData.amount}€ (cote ${odds}x) → Gagné **${winnings}€** (profit: +${profit}€)\n`;
         
