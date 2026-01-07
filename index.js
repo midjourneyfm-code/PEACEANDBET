@@ -1,23 +1,64 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
-const fs = require('fs');
 const config = require('./config.json');
 const express = require('express');
 const mongoose = require('mongoose');
-const app = express()
-const PORT = process.env.PORT; // Render définit cette variable
 const https = require('https');
 
+const app = express();
+const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI;
 
 app.get('/', (_req, res) => res.send('Bot Discord en ligne ✅'));
-
 app.listen(PORT, () => console.log(`Serveur web actif sur le port ${PORT}`));
 
+// Connexion MongoDB
 mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('MongoDB connecté ✅'))
   .catch(err => console.error('Erreur MongoDB:', err));
 
-// Créer le client Discord avec les intents nécessaires
+// ==================== SCHEMAS MONGODB ====================
+
+const userSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  balance: { type: Number, default: 100 },
+  stats: {
+    totalBets: { type: Number, default: 0 },
+    wonBets: { type: Number, default: 0 },
+    lostBets: { type: Number, default: 0 }
+  },
+  history: [{
+    betId: String,
+    question: String,
+    option: String,
+    amount: Number,
+    winnings: Number,
+    result: String,
+    timestamp: Date
+  }]
+});
+
+const betSchema = new mongoose.Schema({
+  messageId: { type: String, required: true, unique: true },
+  question: String,
+  options: [{ name: String, odds: Number }],
+  initialOdds: [Number],
+  bettors: mongoose.Schema.Types.Mixed,
+  creator: String,
+  channelId: String,
+  totalPool: { type: Number, default: 0 },
+  status: { type: String, default: 'open' },
+  createdAt: { type: Date, default: Date.now },
+  closingTime: Date,
+  reminderSent: { type: Boolean, default: false },
+  isBoosted: { type: Boolean, default: false },
+  winningOptions: [Number]
+});
+
+const User = mongoose.model('User', userSchema);
+const Bet = mongoose.model('Bet', betSchema);
+
+// ==================== CLIENT DISCORD ====================
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -27,117 +68,122 @@ const client = new Client({
   ]
 });
 
-// Stockage des paris et des soldes des utilisateurs
-let bets = {}; // { messageId: { question, options: [], bettors: {} } }
-let userBalances = {}; // { userId: balance }
-let userStats = {}; // { userId: { totalBets, wonBets, lostBets } }
-let userHistory = {}; // { userId: [{ betId, question, option, amount, result, timestamp }] }
-
-// Nom du rôle autorisé à créer des paris
 const BETTING_CREATOR_ROLE = 'Créateur de Paris';
 
-// Charger les données sauvegardées
-function loadData() {
-  try {
-    if (fs.existsSync('./bets.json')) {
-      bets = JSON.parse(fs.readFileSync('./bets.json', 'utf8'));
-    }
-    if (fs.existsSync('./balances.json')) {
-      userBalances = JSON.parse(fs.readFileSync('./balances.json', 'utf8'));
-    }
-    if (fs.existsSync('./stats.json')) {
-      userStats = JSON.parse(fs.readFileSync('./stats.json', 'utf8'));
-    }
-    if (fs.existsSync('./history.json')) {
-      userHistory = JSON.parse(fs.readFileSync('./history.json', 'utf8'));
-    }
-  } catch (error) {
-    console.error('Erreur lors du chargement des données:', error);
+// ==================== FONCTIONS UTILITAIRES ====================
+
+async function getUser(userId) {
+  let user = await User.findOne({ userId });
+  if (!user) {
+    user = new User({ userId, balance: 100 });
+    await user.save();
   }
+  return user;
 }
 
-// Sauvegarder les données
-function saveData() {
-  try {
-    fs.writeFileSync('./bets.json', JSON.stringify(bets, null, 2));
-    fs.writeFileSync('./balances.json', JSON.stringify(userBalances, null, 2));
-    fs.writeFileSync('./stats.json', JSON.stringify(userStats, null, 2));
-    fs.writeFileSync('./history.json', JSON.stringify(userHistory, null, 2));
-  } catch (error) {
-    console.error('Erreur lors de la sauvegarde des données:', error);
-  }
+async function getBalance(userId) {
+  const user = await getUser(userId);
+  return user.balance;
 }
 
-// Obtenir ou initialiser le solde d'un utilisateur
-function getBalance(userId) {
-  if (!userBalances[userId]) {
-    userBalances[userId] = 100; // Solde de départ : 100€
-    saveData();
-  }
-  return userBalances[userId];
+async function getStats(userId) {
+  const user = await getUser(userId);
+  return user.stats;
 }
 
-// Obtenir ou initialiser les stats d'un utilisateur
-function getStats(userId) {
-  if (!userStats[userId]) {
-    userStats[userId] = {
-      totalBets: 0,
-      wonBets: 0,
-      lostBets: 0
-    };
-    saveData();
-  }
-  return userStats[userId];
-}
-
-// Calculer le winrate d'un utilisateur
-function calculateWinrate(userId) {
-  const stats = getStats(userId);
+async function calculateWinrate(userId) {
+  const stats = await getStats(userId);
   if (stats.totalBets === 0) return 0;
   return ((stats.wonBets / stats.totalBets) * 100).toFixed(1);
 }
 
-// Calculer les gains potentiels avec les cotes
 function calculatePotentialWin(amount, odds) {
   return Math.floor(amount * odds);
 }
 
-// Calculer les nouvelles cotes basées sur les mises
-function calculateDynamicOdds(bet) {
-  const optionPools = new Array(bet.options.length).fill(0);
-  
-  // Calculer le total misé sur chaque option
-  Object.values(bet.bettors).forEach(betData => {
-    optionPools[betData.option] += betData.amount;
-  });
-  
-  const totalPool = bet.totalPool;
-  
-  // Calculer les cotes pour chaque option
-  return bet.options.map((opt, index) => {
-    const optionPool = optionPools[index];
-    if (optionPool === 0) return bet.initialOdds[index]; // Garder la cote initiale si personne n'a misé
+async function closeBetAutomatically(messageId) {
+  try {
+    const bet = await Bet.findOne({ messageId });
+    if (!bet || bet.status !== 'open') return;
     
-    // Formule : cote = (totalPool / optionPool) * 0.95 (on garde 5% de marge)
-    const dynamicOdds = (totalPool / optionPool) * 0.95;
-    return Math.max(1.01, Math.min(dynamicOdds, 50)); // Limiter entre 1.01 et 50
-  });
+    bet.status = 'locked';
+    await bet.save();
+    
+    const channel = await client.channels.fetch(bet.channelId);
+    const msg = await channel.messages.fetch(messageId);
+    
+    const lockedEmbed = EmbedBuilder.from(msg.embeds[0]).setColor('#FFA500');
+    const fields = msg.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
+    fields.push(
+      { name: '📈 Statut', value: '🔒 Clôturé (en attente de validation)', inline: true },
+      { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
+      { name: '👥 Parieurs', value: `${Object.keys(bet.bettors).length}`, inline: true }
+    );
+    lockedEmbed.setFields(fields);
+    
+    const adminRow = msg.components[msg.components.length - 1];
+    await msg.edit({ embeds: [lockedEmbed], components: [adminRow] });
+    await msg.reply('🔒 **Les paris sont maintenant clôturés !** Le match est en cours. En attente de validation du résultat...');
+  } catch (error) {
+    console.error('Erreur clôture auto:', error);
+  }
 }
 
-client.once('ready', () => {
+async function sendReminder(messageId) {
+  try {
+    const bet = await Bet.findOne({ messageId });
+    if (!bet || bet.status !== 'open' || bet.reminderSent) return;
+    
+    bet.reminderSent = true;
+    await bet.save();
+    
+    const channel = await client.channels.fetch(bet.channelId);
+    const msg = await channel.messages.fetch(messageId);
+    
+    if (bet.isBoosted) {
+      await msg.reply('⏰🔥 **DERNIÈRE HEURE POUR LE BOOST !** Ne ratez pas cette cote exceptionnelle !');
+    } else {
+      await msg.reply('⏰ **Rappel** : Plus qu\'**1 heure** avant la clôture des paris ! Placez vos mises maintenant !');
+    }
+  } catch (error) {
+    console.error('Erreur rappel:', error);
+  }
+}
+
+// ==================== ÉVÉNEMENTS ====================
+
+client.once('ready', async () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
-  loadData();
+  
+  const activeBets = await Bet.find({ status: 'open', closingTime: { $exists: true, $ne: null } });
+  
+  for (const bet of activeBets) {
+    const timeUntilClosing = new Date(bet.closingTime).getTime() - Date.now();
+    
+    if (timeUntilClosing > 0) {
+      setTimeout(async () => {
+        await closeBetAutomatically(bet.messageId);
+      }, timeUntilClosing);
+      
+      const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
+      if (oneHourBefore > 0) {
+        setTimeout(async () => {
+          await sendReminder(bet.messageId);
+        }, oneHourBefore);
+      }
+    } else if (bet.status === 'open') {
+      await closeBetAutomatically(bet.messageId);
+    }
+  }
 });
 
-// Gestion des interactions (boutons et modals)
 client.on('interactionCreate', async (interaction) => {
-  // Gestion des boutons
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
 
     if (action === 'bet') {
       const optionIndex = parseInt(params[0]);
-      const bet = bets[betId];
+      const bet = await Bet.findOne({ messageId: betId });
 
       if (!bet) {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
@@ -151,15 +197,10 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Ce pari est fermé.', ephemeral: true });
       }
 
-      // Vérifier si l'utilisateur a déjà parié
       if (bet.bettors[interaction.user.id]) {
         return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
       }
 
-      const currentOdds = bet.initialOdds[optionIndex];
-      const balance = getBalance(interaction.user.id);
-
-      // Créer le modal pour entrer le montant
       const modal = new ModalBuilder()
         .setCustomId(`bet_modal_${betId}_${optionIndex}`)
         .setTitle(`Parier sur ${bet.options[optionIndex].name}`);
@@ -179,124 +220,13 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.showModal(modal);
     }
 
-    if (action === 'validate') {
-      const winningOptions = params.map(p => parseInt(p));
-      const bet = bets[betId];
-
-      if (!bet) {
-        return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
-      }
-
-      // Vérifier si l'utilisateur a le rôle requis
-      const member = await interaction.guild.members.fetch(interaction.user.id);
-      const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
-
-      if (!hasRole) {
-        return interaction.reply({ content: `❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour valider des paris.`, ephemeral: true });
-      }
-
-      // Vérifier que c'est le créateur
-      if (bet.creator !== interaction.user.id) {
-        return interaction.reply({ content: '❌ Seul le créateur du pari peut le valider.', ephemeral: true });
-      }
-
-      if (bet.status !== 'open') {
-        return interaction.reply({ content: '❌ Ce pari a déjà été résolu.', ephemeral: true });
-      }
-
-      // Calculer les gains avec les cotes initiales
-      const winners = Object.entries(bet.bettors).filter(([userId, betData]) => 
-        winningOptions.includes(betData.option)
-      );
-
-      if (winners.length === 0) {
-        await interaction.reply('⚠️ Aucun gagnant pour ce pari. Les mises sont perdues.');
-        bet.status = 'resolved';
-        saveData();
-        
-        // Mettre à jour l'embed
-        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-          .setColor('#FF0000')
-          .setTitle('📊 Pari Terminé - Aucun Gagnant');
-        
-        await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
-        return;
-      }
-
-      // Distribuer les gains selon les cotes initiales
-      let distributionText = '🏆 **Résultats du pari**\n\n';
-      distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
-
-      // Mettre à jour les stats de tous les parieurs
-      Object.entries(bet.bettors).forEach(([userId, betData]) => {
-        const stats = getStats(userId);
-        stats.totalBets++;
-        
-        // Initialiser l'historique si nécessaire
-        if (!userHistory[userId]) userHistory[userId] = [];
-        
-        if (winningOptions.includes(betData.option)) {
-          // Gagnant
-          stats.wonBets++;
-          const odds = bet.initialOdds[betData.option];
-          const winnings = calculatePotentialWin(betData.amount, odds);
-          const profit = winnings - betData.amount;
-          
-          userBalances[userId] = (userBalances[userId] || 0) + winnings;
-          distributionText += `• <@${userId}> : Misé ${betData.amount}€ (cote ${odds}x) → Gagné **${winnings}€** (profit: +${profit}€)\n`;
-          
-          // Ajouter à l'historique
-          userHistory[userId].push({
-            betId,
-            question: bet.question,
-            option: bet.options[betData.option].name,
-            amount: betData.amount,
-            winnings: winnings,
-            result: 'won',
-            timestamp: Date.now()
-          });
-        } else {
-          // Perdant
-          stats.lostBets++;
-          
-          // Ajouter à l'historique
-          userHistory[userId].push({
-            betId,
-            question: bet.question,
-            option: bet.options[betData.option].name,
-            amount: betData.amount,
-            winnings: 0,
-            result: 'lost',
-            timestamp: Date.now()
-          });
-        }
-      });
-
-      bet.status = 'resolved';
-      bet.winningOptions = winningOptions;
-      saveData();
-
-      // Mettre à jour l'embed
-      const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setColor('#00FF00')
-        .setTitle('📊 Pari Terminé')
-        .addFields(
-          { name: '✅ Résultat', value: winningOptions.map(i => `${bet.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
-          { name: '💵 Total distribué', value: `${winners.reduce((sum, [_, betData]) => sum + calculatePotentialWin(betData.amount, bet.initialOdds[betData.option]), 0)}€`, inline: true }
-        );
-
-      await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
-      await interaction.reply(distributionText);
-    }
-
     if (action === 'cancel') {
-      const bet = bets[betId];
+      const bet = await Bet.findOne({ messageId: betId });
 
       if (!bet) {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
       }
 
-      // Vérifier si l'utilisateur a le rôle requis
       const member = await interaction.guild.members.fetch(interaction.user.id);
       const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
 
@@ -308,17 +238,18 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Seul le créateur du pari peut l\'annuler.', ephemeral: true });
       }
 
-      if (bet.status !== 'open') {
-        return interaction.reply({ content: '❌ Ce pari ne peut plus être annulé.', ephemeral: true });
+      if (bet.status === 'resolved' || bet.status === 'cancelled') {
+        return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
       }
 
-      // Rembourser tous les parieurs
-      Object.entries(bet.bettors).forEach(([userId, betData]) => {
-        userBalances[userId] = (userBalances[userId] || 0) + betData.amount;
-      });
+      for (const [userId, betData] of Object.entries(bet.bettors)) {
+        const user = await getUser(userId);
+        user.balance += betData.amount;
+        await user.save();
+      }
 
       bet.status = 'cancelled';
-      saveData();
+      await bet.save();
 
       const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
         .setColor('#808080')
@@ -331,24 +262,21 @@ client.on('interactionCreate', async (interaction) => {
     if (action === 'leaderboard') {
       const sortBy = params[0];
       
-      // Récupérer tous les utilisateurs avec leurs stats
-      const users = Object.keys(userBalances).map(userId => ({
-        userId,
-        balance: getBalance(userId),
-        stats: getStats(userId),
-        winrate: parseFloat(calculateWinrate(userId))
+      const users = await User.find({});
+      const userList = users.map(u => ({
+        userId: u.userId,
+        balance: u.balance,
+        stats: u.stats,
+        winrate: u.stats.totalBets === 0 ? 0 : parseFloat(((u.stats.wonBets / u.stats.totalBets) * 100).toFixed(1))
       }));
 
-      // Trier selon le critère
       let sortedUsers;
       let sortEmoji;
       let sortLabel;
       
       if (sortBy === 'winrate') {
-        // Pour le winrate, filtrer ceux qui ont au moins 1 pari
-        sortedUsers = users.filter(u => u.stats.totalBets > 0).sort((a, b) => {
-          // Trier par winrate d'abord, puis par nombre de paris en cas d'égalité
-          if (Math.abs(b.winrate - a.winrate) > 0.01) { // Epsilon pour comparaison de floats
+        sortedUsers = userList.filter(u => u.stats.totalBets > 0).sort((a, b) => {
+          if (Math.abs(b.winrate - a.winrate) > 0.01) {
             return b.winrate - a.winrate;
           }
           return b.stats.totalBets - a.stats.totalBets;
@@ -356,15 +284,13 @@ client.on('interactionCreate', async (interaction) => {
         sortEmoji = '📊';
         sortLabel = 'Winrate';
       } else {
-        sortedUsers = users.sort((a, b) => b.balance - a.balance);
+        sortedUsers = userList.sort((a, b) => b.balance - a.balance);
         sortEmoji = '💰';
         sortLabel = 'Solde';
       }
 
-      // Limiter au top 10
       const top10 = sortedUsers.slice(0, 10);
 
-      // Créer l'embed du classement
       let description = '';
       for (let i = 0; i < top10.length; i++) {
         const user = top10[i];
@@ -387,7 +313,6 @@ client.on('interactionCreate', async (interaction) => {
         .setFooter({ text: 'Cliquez sur les boutons pour changer le tri' })
         .setTimestamp();
 
-      // Créer les boutons de tri
       const row = new ActionRowBuilder()
         .addComponents(
           new ButtonBuilder()
@@ -406,13 +331,12 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // Gestion des modals (fenêtre de saisie)
   if (interaction.isModalSubmit()) {
     const [action, subaction, betId, optionIndex] = interaction.customId.split('_');
 
     if (action === 'bet' && subaction === 'modal') {
       const amount = parseInt(interaction.fields.getTextInputValue('amount'));
-      const bet = bets[betId];
+      const bet = await Bet.findOne({ messageId: betId });
 
       if (!bet) {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
@@ -430,18 +354,15 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Veuillez entrer un montant valide (nombre entier positif).', ephemeral: true });
       }
 
-      // Vérifier si l'utilisateur a déjà parié (double sécurité)
       if (bet.bettors[interaction.user.id]) {
         return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
       }
 
-      // Vérifier le solde
-      const balance = getBalance(interaction.user.id);
-      if (balance < amount) {
-        return interaction.reply({ content: `❌ Solde insuffisant. Vous avez **${balance}€**.`, ephemeral: true });
+      const user = await getUser(interaction.user.id);
+      if (user.balance < amount) {
+        return interaction.reply({ content: `❌ Solde insuffisant. Vous avez **${user.balance}€**.`, ephemeral: true });
       }
 
-      // Placer le pari
       const optIndex = parseInt(optionIndex);
       const odds = bet.initialOdds[optIndex];
       const potentialWin = calculatePotentialWin(amount, odds);
@@ -453,33 +374,31 @@ client.on('interactionCreate', async (interaction) => {
         odds: odds
       };
       
-      userBalances[interaction.user.id] -= amount;
+      user.balance -= amount;
       bet.totalPool += amount;
-      saveData();
+      await user.save();
+      await bet.save();
 
-      // Mettre à jour l'embed du pari
       try {
         const channel = await client.channels.fetch(bet.channelId);
         const betMessage = await channel.messages.fetch(betId);
         
         const bettorsCount = Object.keys(bet.bettors).length;
         
-        const updatedEmbed = EmbedBuilder.from(betMessage.embeds[0])
-          .setFields(
-            betMessage.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name)).concat([
-              { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
-              { name: '📈 Statut', value: '🟢 En cours', inline: true },
-              { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
-              { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
-            ])
-          );
-
+        const fields = betMessage.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
+        fields.push(
+          { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
+          { name: '📈 Statut', value: bet.status === 'open' ? '🟢 En cours' : '🔒 Clôturé', inline: true },
+          { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
+          { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
+        );
+        
+        const updatedEmbed = EmbedBuilder.from(betMessage.embeds[0]).setFields(fields);
         await betMessage.edit({ embeds: [updatedEmbed] });
         
-        // Annonce publique du pari
         await betMessage.reply(`💰 **<@${interaction.user.id}>** a parié **${amount}€** sur **${bet.options[optIndex].name}** (cote ${odds}x) — Gain potentiel : **${potentialWin}€**`);
       } catch (error) {
-        console.error('Erreur lors de la mise à jour du message:', error);
+        console.error('Erreur mise à jour:', error);
       }
 
       const successEmbed = new EmbedBuilder()
@@ -490,7 +409,7 @@ client.on('interactionCreate', async (interaction) => {
           { name: 'Cote', value: `${odds}x`, inline: true },
           { name: 'Gain potentiel', value: `${potentialWin}€`, inline: true },
           { name: 'Profit potentiel', value: `+${potentialWin - amount}€`, inline: true },
-          { name: 'Nouveau solde', value: `${userBalances[interaction.user.id]}€` }
+          { name: 'Nouveau solde', value: `${user.balance}€` }
         );
 
       await interaction.reply({ embeds: [successEmbed], ephemeral: true });
@@ -498,28 +417,27 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
+// ==================== COMMANDES ====================
+
 client.on('messageCreate', async (message) => {
-  // Ignorer les messages des bots
   if (message.author.bot) return;
 
   const args = message.content.split(' ');
   const command = args[0].toLowerCase();
 
-  // Commande pour voir son solde
   if (command === '!solde' || command === '!balance') {
-    const balance = getBalance(message.author.id);
-    const stats = getStats(message.author.id);
-    const winrate = calculateWinrate(message.author.id);
+    const user = await getUser(message.author.id);
+    const winrate = await calculateWinrate(message.author.id);
     
     const embed = new EmbedBuilder()
       .setColor('#FFD700')
       .setTitle('💰 Votre Profil')
       .addFields(
-        { name: '💵 Solde', value: `**${balance}€**`, inline: true },
+        { name: '💵 Solde', value: `**${user.balance}€**`, inline: true },
         { name: '📊 Winrate', value: `**${winrate}%**`, inline: true },
-        { name: '🎲 Paris totaux', value: `${stats.totalBets}`, inline: true },
-        { name: '✅ Gagnés', value: `${stats.wonBets}`, inline: true },
-        { name: '❌ Perdus', value: `${stats.lostBets}`, inline: true }
+        { name: '🎲 Paris totaux', value: `${user.stats.totalBets}`, inline: true },
+        { name: '✅ Gagnés', value: `${user.stats.wonBets}`, inline: true },
+        { name: '❌ Perdus', value: `${user.stats.lostBets}`, inline: true }
       )
       .setFooter({ text: message.author.tag })
       .setTimestamp();
@@ -527,29 +445,24 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [embed] });
   }
 
-  // Commande pour le classement
   if (command === '!classement' || command === '!leaderboard' || command === '!top') {
-    // Par défaut, trier par solde
     const sortBy = args[1] || 'solde';
     
-    // Récupérer tous les utilisateurs avec leurs stats
-    const users = Object.keys(userBalances).map(userId => ({
-      userId,
-      balance: getBalance(userId),
-      stats: getStats(userId),
-      winrate: parseFloat(calculateWinrate(userId))
+    const users = await User.find({});
+    const userList = users.map(u => ({
+      userId: u.userId,
+      balance: u.balance,
+      stats: u.stats,
+      winrate: u.stats.totalBets === 0 ? 0 : parseFloat(((u.stats.wonBets / u.stats.totalBets) * 100).toFixed(1))
     }));
 
-    // Trier selon le critère
     let sortedUsers;
     let sortEmoji;
     let sortLabel;
     
     if (sortBy === 'winrate') {
-      // Pour le winrate, filtrer ceux qui ont au moins 1 pari
-      sortedUsers = users.filter(u => u.stats.totalBets > 0).sort((a, b) => {
-        // Trier par winrate d'abord, puis par nombre de paris en cas d'égalité
-        if (b.winrate !== a.winrate) {
+      sortedUsers = userList.filter(u => u.stats.totalBets > 0).sort((a, b) => {
+        if (Math.abs(b.winrate - a.winrate) > 0.01) {
           return b.winrate - a.winrate;
         }
         return b.stats.totalBets - a.stats.totalBets;
@@ -557,15 +470,13 @@ client.on('messageCreate', async (message) => {
       sortEmoji = '📊';
       sortLabel = 'Winrate';
     } else {
-      sortedUsers = users.sort((a, b) => b.balance - a.balance);
+      sortedUsers = userList.sort((a, b) => b.balance - a.balance);
       sortEmoji = '💰';
       sortLabel = 'Solde';
     }
 
-    // Limiter au top 10
     const top10 = sortedUsers.slice(0, 10);
 
-    // Créer l'embed du classement
     let description = '';
     for (let i = 0; i < top10.length; i++) {
       const user = top10[i];
@@ -584,7 +495,6 @@ client.on('messageCreate', async (message) => {
       .setFooter({ text: 'Cliquez sur les boutons pour changer le tri' })
       .setTimestamp();
 
-    // Créer les boutons de tri
     const row = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -602,50 +512,42 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [embed], components: [row] });
   }
 
-  // Commande pour modifier le solde d'un joueur (ADMIN avec rôle)
-  if (command === '!modifier-solde' || command === '!setbalance') {
-    // Vérifier si l'utilisateur a le rôle requis
-    const member = await message.guild.members.fetch(message.author.id);
-    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
-
-    if (!hasRole) {
-      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour modifier les soldes.`);
-    }
-
-    // Format: !modifier-solde @user montant
-    const targetUser = message.mentions.users.first();
-    const amount = parseInt(args[2]);
-
-    if (!targetUser) {
-      return message.reply('❌ Vous devez mentionner un utilisateur.\nFormat: `!modifier-solde @user montant`\nExemple: `!modifier-solde @Jean 500`');
-    }
-
-    if (isNaN(amount)) {
-      return message.reply('❌ Le montant doit être un nombre valide.');
-    }
-
-    const oldBalance = getBalance(targetUser.id);
-    userBalances[targetUser.id] = amount;
-    saveData();
+  if (command === '!profil' || command === '!profile' || command === '!stats') {
+    const targetUser = message.mentions.users.first() || message.author;
+    const user = await getUser(targetUser.id);
+    const winrate = await calculateWinrate(targetUser.id);
+    
+    const recentHistory = user.history.slice(-5).reverse();
 
     const embed = new EmbedBuilder()
-      .setColor('#00FF00')
-      .setTitle('✅ Solde Modifié')
-      .setDescription(`Le solde de <@${targetUser.id}> a été modifié.`)
+      .setColor('#FFD700')
+      .setTitle(`📊 Profil de ${targetUser.username}`)
+      .setThumbnail(targetUser.displayAvatarURL())
       .addFields(
-        { name: 'Ancien solde', value: `${oldBalance}€`, inline: true },
-        { name: 'Nouveau solde', value: `${amount}€`, inline: true },
-        { name: 'Différence', value: `${amount > oldBalance ? '+' : ''}${amount - oldBalance}€`, inline: true }
+        { name: '💵 Solde', value: `**${user.balance}€**`, inline: true },
+        { name: '📊 Winrate', value: `**${winrate}%**`, inline: true },
+        { name: '🎲 Paris totaux', value: `${user.stats.totalBets}`, inline: true },
+        { name: '✅ Gagnés', value: `${user.stats.wonBets}`, inline: true },
+        { name: '❌ Perdus', value: `${user.stats.lostBets}`, inline: true },
+        { name: '⚖️ Ratio', value: `${user.stats.wonBets}/${user.stats.lostBets}`, inline: true }
       )
-      .setFooter({ text: `Modifié par ${message.author.tag}` })
       .setTimestamp();
+
+    if (recentHistory.length > 0) {
+      let historyText = '';
+      for (const h of recentHistory) {
+        const resultEmoji = h.result === 'won' ? '✅' : '❌';
+        const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
+        historyText += `${resultEmoji} **${h.question}** — ${h.option} (${h.amount}€) ${profit}\n`;
+      }
+      embed.addFields({ name: '📜 Historique Récent', value: historyText, inline: false });
+    }
 
     message.reply({ embeds: [embed] });
   }
 
-  // Commande pour voir les paris en cours
   if (command === '!paris') {
-    const activeBets = Object.entries(bets).filter(([id, bet]) => bet.status === 'open' || bet.status === 'locked');
+    const activeBets = await Bet.find({ status: { $in: ['open', 'locked'] } });
 
     if (activeBets.length === 0) {
       return message.reply('📭 Aucun pari en cours pour le moment.');
@@ -657,21 +559,20 @@ client.on('messageCreate', async (message) => {
       .setDescription(`Il y a actuellement **${activeBets.length}** pari(s) actif(s) :\n\n`)
       .setTimestamp();
 
-    for (const [betId, bet] of activeBets) {
+    for (const bet of activeBets) {
       const statusEmoji = bet.status === 'locked' ? '🔒' : '🟢';
       const statusText = bet.status === 'locked' ? 'Clôturé' : 'Ouvert';
       const bettorsCount = Object.keys(bet.bettors).length;
       
-      // Lister les options avec leurs numéros pour faciliter la validation
       const optionsList = bet.options.map((opt, i) => `${i + 1}. ${opt.name} (${bet.initialOdds[i]}x)`).join(', ');
       
-      let fieldValue = `**ID:** \`${betId}\`\n**Statut:** ${statusEmoji} ${statusText}\n**Options:** ${optionsList}\n**Parieurs:** ${bettorsCount}\n**Cagnotte:** ${bet.totalPool}€`;
+      let fieldValue = `**ID:** \`${bet.messageId}\`\n**Statut:** ${statusEmoji} ${statusText}\n**Options:** ${optionsList}\n**Parieurs:** ${bettorsCount}\n**Cagnotte:** ${bet.totalPool}€`;
       
       if (bet.closingTime) {
-        fieldValue += `\n**Clôture:** <t:${Math.floor(bet.closingTime / 1000)}:R>`;
+        fieldValue += `\n**Clôture:** <t:${Math.floor(new Date(bet.closingTime).getTime() / 1000)}:R>`;
       }
       
-      fieldValue += `\n\n💡 _Pour valider : \`!valider ${betId} [numéros]\`_`;
+      fieldValue += `\n\n💡 _Pour valider : \`!valider ${bet.messageId} [numéros]\`_`;
       
       embed.addFields({
         name: bet.question,
@@ -683,46 +584,6 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [embed] });
   }
 
-  // Commande pour voir le profil d'un membre
-  if (command === '!profil' || command === '!profile' || command === '!stats') {
-    const targetUser = message.mentions.users.first() || message.author;
-    const balance = getBalance(targetUser.id);
-    const stats = getStats(targetUser.id);
-    const winrate = calculateWinrate(targetUser.id);
-    
-    // Récupérer l'historique
-    const history = userHistory[targetUser.id] || [];
-    const recentHistory = history.slice(-5).reverse(); // 5 derniers paris
-
-    const embed = new EmbedBuilder()
-      .setColor('#FFD700')
-      .setTitle(`📊 Profil de ${targetUser.username}`)
-      .setThumbnail(targetUser.displayAvatarURL())
-      .addFields(
-        { name: '💵 Solde', value: `**${balance}€**`, inline: true },
-        { name: '📊 Winrate', value: `**${winrate}%**`, inline: true },
-        { name: '🎲 Paris totaux', value: `${stats.totalBets}`, inline: true },
-        { name: '✅ Gagnés', value: `${stats.wonBets}`, inline: true },
-        { name: '❌ Perdus', value: `${stats.lostBets}`, inline: true },
-        { name: '⚖️ Ratio', value: `${stats.wonBets}/${stats.lostBets}`, inline: true }
-      )
-      .setTimestamp();
-
-    // Ajouter l'historique récent si disponible
-    if (recentHistory.length > 0) {
-      let historyText = '';
-      for (const h of recentHistory) {
-        const resultEmoji = h.result === 'won' ? '✅' : '❌';
-        const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
-        historyText += `${resultEmoji} **${h.question}** — ${h.option} (${h.amount}€) ${profit}\n`;
-      }
-      embed.addFields({ name: '📜 Historique Récent', value: historyText || 'Aucun historique', inline: false });
-    }
-
-    message.reply({ embeds: [embed] });
-  }
-
-  // Commande pour faire un don
   if (command === '!don' || command === '!give') {
     const targetUser = message.mentions.users.first();
     const amount = parseInt(args[2]);
@@ -743,54 +604,202 @@ client.on('messageCreate', async (message) => {
       return message.reply('❌ Le montant doit être un nombre positif valide.');
     }
 
-    const balance = getBalance(message.author.id);
-    if (balance < amount) {
-      return message.reply(`❌ Solde insuffisant. Vous avez **${balance}€**.`);
+    const donor = await getUser(message.author.id);
+    if (donor.balance < amount) {
+      return message.reply(`❌ Solde insuffisant. Vous avez **${donor.balance}€**.`);
     }
 
-    // Effectuer le transfert
-    userBalances[message.author.id] -= amount;
-    userBalances[targetUser.id] = (userBalances[targetUser.id] || 0) + amount;
-    saveData();
+    const recipient = await getUser(targetUser.id);
+    donor.balance -= amount;
+    recipient.balance += amount;
+    await donor.save();
+    await recipient.save();
 
     const embed = new EmbedBuilder()
       .setColor('#00FF00')
       .setTitle('🎁 Don Effectué')
       .setDescription(`<@${message.author.id}> a fait un don de **${amount}€** à <@${targetUser.id}> !`)
       .addFields(
-        { name: 'Donateur', value: `<@${message.author.id}>\nNouveau solde : ${userBalances[message.author.id]}€`, inline: true },
-        { name: 'Bénéficiaire', value: `<@${targetUser.id}>\nNouveau solde : ${getBalance(targetUser.id)}€`, inline: true }
+        { name: 'Donateur', value: `<@${message.author.id}>\nNouveau solde : ${donor.balance}€`, inline: true },
+        { name: 'Bénéficiaire', value: `<@${targetUser.id}>\nNouveau solde : ${recipient.balance}€`, inline: true }
       )
       .setTimestamp();
 
     message.reply({ embeds: [embed] });
   }
 
-  // Commande pour créer un pari (AVEC VÉRIFICATION DU RÔLE)
-  if (command === '!creer-pari' || command === '!createbet') {
-    // Vérifier si l'utilisateur a le rôle requis
+  if (command === '!modifier-solde' || command === '!setbalance') {
     const member = await message.guild.members.fetch(message.author.id);
     const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
 
     if (!hasRole) {
-      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris.\n\n_Demandez à un administrateur de vous donner ce rôle._`);
+      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour modifier les soldes.`);
     }
 
-    // Format: !creer-pari Question ? | Option 1:1.5 | Option 2:2.5 | Option 3:5 | 2h30
+    const targetUser = message.mentions.users.first();
+    const amount = parseInt(args[2]);
+
+    if (!targetUser) {
+      return message.reply('❌ Vous devez mentionner un utilisateur.\nFormat: `!modifier-solde @user montant`\nExemple: `!modifier-solde @Jean 500`');
+    }
+
+    if (isNaN(amount)) {
+      return message.reply('❌ Le montant doit être un nombre valide.');
+    }
+
+    const user = await getUser(targetUser.id);
+    const oldBalance = user.balance;
+    user.balance = amount;
+    await user.save();
+
+    const embed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ Solde Modifié')
+      .setDescription(`Le solde de <@${targetUser.id}> a été modifié.`)
+      .addFields(
+        { name: 'Ancien solde', value: `${oldBalance}€`, inline: true },
+        { name: 'Nouveau solde', value: `${amount}€`, inline: true },
+        { name: 'Différence', value: `${amount > oldBalance ? '+' : ''}${amount - oldBalance}€`, inline: true }
+      )
+      .setFooter({ text: `Modifié par ${message.author.tag}` })
+      .setTimestamp();
+
+    message.reply({ embeds: [embed] });
+  }
+
+  if (command === '!annuler-tout' || command === '!cancelall') {
+    const member = await message.guild.members.fetch(message.author.id);
+    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+    if (!hasRole) {
+      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour annuler tous les paris.`);
+    }
+
+    const activeBets = await Bet.find({ status: { $in: ['open', 'locked'] } });
+
+    if (activeBets.length === 0) {
+      return message.reply('❌ Aucun pari actif à annuler.');
+    }
+
+    let cancelledCount = 0;
+    let refundedAmount = 0;
+
+    for (const bet of activeBets) {
+      for (const [userId, betData] of Object.entries(bet.bettors)) {
+        const user = await getUser(userId);
+        user.balance += betData.amount;
+        refundedAmount += betData.amount;
+        await user.save();
+      }
+
+      bet.status = 'cancelled';
+      await bet.save();
+
+      try {
+        const channel = await client.channels.fetch(bet.channelId);
+        const msg = await channel.messages.fetch(bet.messageId);
+        
+        const updatedEmbed = EmbedBuilder.from(msg.embeds[0])
+          .setColor('#808080')
+          .setTitle('📊 Pari Annulé');
+
+        await msg.edit({ embeds: [updatedEmbed], components: [] });
+      } catch (error) {
+        console.error('Erreur mise à jour message:', error);
+      }
+
+      cancelledCount++;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor('#FF0000')
+      .setTitle('🚫 Tous les Paris Annulés')
+      .setDescription(`Tous les paris actifs ont été annulés et les parieurs remboursés.`)
+      .addFields(
+        { name: 'Paris annulés', value: `${cancelledCount}`, inline: true },
+        { name: 'Montant total remboursé', value: `${refundedAmount}€`, inline: true }
+      )
+      .setFooter({ text: `Par ${message.author.tag}` })
+      .setTimestamp();
+
+    message.reply({ embeds: [embed] });
+  }
+
+  if (command === '!valider' || command === '!resolve') {
+    const betMessageId = args[1];
+    const winningOptionsStr = args.slice(2).join(' ');
+
+    if (!betMessageId || !winningOptionsStr) {
+      return message.reply('❌ Format incorrect. Utilisez : `!valider [messageId] [numéros des options]`\nEx: `!valider 123456789 1 3` pour valider les options 1 et 3');
+    }
+
+    const bet = await Bet.findOne({ messageId: betMessageId });
+
+    if (!bet) {
+      return message.reply('❌ Pari introuvable. Vérifiez l\'ID du message.');
+    }
+
+    const member = await message.guild.members.fetch(message.author.id);
+    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+    if (!hasRole) {
+      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour valider des paris.`);
+    }
+
+    if (bet.creator !== message.author.id) {
+      return message.reply('❌ Seul le créateur du pari peut le valider.');
+    }
+
+    // CORRECTION: Autoriser la validation des paris 'locked'
+    if (bet.status === 'resolved' || bet.status === 'cancelled') {
+      return message.reply('❌ Ce pari a déjà été résolu ou annulé.');
+    }
+
+    const winningOptions = winningOptionsStr.split(/[\s,]+/).map(n => parseInt(n) - 1);
+    
+    if (winningOptions.some(opt => isNaN(opt) || opt < 0 || opt >= bet.options.length)) {
+      return message.reply('❌ Numéro d\'option invalide.');
+    }
+
+    // Créer les boutons de confirmation
+    const confirmRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`validate_${betMessageId}_${winningOptions.join('_')}`)
+          .setLabel(`Confirmer : ${winningOptions.map(i => bet.options[i].name).join(', ')}`)
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('✅')
+      );
+
+    const confirmEmbed = new EmbedBuilder()
+      .setColor('#FFA500')
+      .setTitle('⚠️ Confirmation de validation')
+      .setDescription(`Êtes-vous sûr de vouloir valider ces options gagnantes ?\n\n${winningOptions.map(i => `• **${bet.options[i].name}** (Cote: ${bet.initialOdds[i]}x)`).join('\n')}\n\n**Cette action est irréversible.**`)
+      .setFooter({ text: 'Cliquez sur le bouton pour confirmer' });
+
+    await message.reply({ embeds: [confirmEmbed], components: [confirmRow] });
+  }
+
+  if (command === '!creer-pari' || command === '!createbet') {
+    const member = await message.guild.members.fetch(message.author.id);
+    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+    if (!hasRole) {
+      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris.`);
+    }
+
     const content = message.content.slice(command.length).trim();
     
     if (!content.includes('|')) {
-      return message.reply('❌ Format incorrect. Utilisez : `!creer-pari Question ? | Option 1:cote1 | Option 2:cote2 | durée`\n\nExemple: `!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | Nul:4.5 | 2h30`\nDurée optionnelle (ex: 1h, 30m, 2h30)');
+      return message.reply('❌ Format incorrect. Utilisez : `!creer-pari Question ? | Option 1:cote1 | Option 2:cote2 | heure`\n\nExemple: `!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | 21h30`\nHeure optionnelle (format 24h)');
     }
 
     const parts = content.split('|').map(p => p.trim());
     const question = parts[0];
     
-    // La dernière partie peut être soit une option, soit une heure de clôture
     let closingTimeStr = null;
     let optionsRaw = parts.slice(1);
     
-    // Vérifier si la dernière partie est une heure (format: 21h30, 14h00, etc)
     const lastPart = parts[parts.length - 1];
     if (/^\d{1,2}h\d{0,2}$/i.test(lastPart.trim())) {
       closingTimeStr = lastPart;
@@ -801,7 +810,6 @@ client.on('messageCreate', async (message) => {
       return message.reply('❌ Vous devez avoir entre 2 et 10 options.');
     }
 
-    // Parser les options avec leurs cotes
     const options = [];
     const odds = [];
 
@@ -821,7 +829,7 @@ client.on('messageCreate', async (message) => {
       odds.push(oddsValue);
     }
 
-    // Calculer l'heure de clôture (heure absolue française - Europe/Paris)
+    // CORRECTION: Fuseau horaire français
     let closingTime = null;
     let closingTimestamp = null;
     
@@ -834,18 +842,13 @@ client.on('messageCreate', async (message) => {
         const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
         
         if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-          // Créer une date pour aujourd'hui à l'heure cible (heure française UTC+1/+2)
           const now = new Date();
-          const closingDate = new Date(now);
+          const parisTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
+          
+          const closingDate = new Date(parisTime);
           closingDate.setHours(targetHour, targetMinute, 0, 0);
           
-          // Ajuster pour le fuseau horaire français (UTC+1 en hiver, UTC+2 en été)
-          // On calcule l'offset actuel
-          const offset = closingDate.getTimezoneOffset(); // Minutes de différence avec UTC
-          const parisOffset = -60; // Paris est UTC+1 (ou -60 minutes par rapport à UTC)
-          
-          // Si l'heure est déjà passée aujourd'hui, on prend demain
-          if (closingDate.getTime() <= now.getTime()) {
+          if (closingDate.getTime() <= parisTime.getTime()) {
             closingDate.setDate(closingDate.getDate() + 1);
           }
           
@@ -857,7 +860,6 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Créer l'embed avec les cotes
     const optionsText = options.map((opt, i) => 
       `**${i + 1}.** ${opt.name} — Cote: **${opt.odds}x**`
     ).join('\n');
@@ -875,16 +877,20 @@ client.on('messageCreate', async (message) => {
       .setFooter({ text: `Créé par ${message.author.tag}` })
       .setTimestamp();
 
-    // Ajouter l'heure de clôture si définie
     if (closingTime) {
+      const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+        timeZone: 'Europe/Paris',
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
+      });
       embed.addFields({
         name: '⏰ Clôture des paris',
-        value: `<t:${Math.floor(closingTimestamp / 1000)}:R> (<t:${Math.floor(closingTimestamp / 1000)}:f>)`,
+        value: `${parisTimeStr} (<t:${Math.floor(closingTimestamp / 1000)}:R>)`,
         inline: false
       });
     }
 
-    // Créer les boutons pour chaque option (max 5 par ligne)
     const rows = [];
     for (let i = 0; i < options.length; i += 5) {
       const row = new ActionRowBuilder();
@@ -903,7 +909,6 @@ client.on('messageCreate', async (message) => {
       rows.push(row);
     }
 
-    // Ajouter les boutons d'administration
     const adminRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -917,7 +922,6 @@ client.on('messageCreate', async (message) => {
 
     const betMessage = await message.channel.send({ embeds: [embed], components: rows });
 
-    // Maintenant qu'on a l'ID du message, on doit recréer les boutons avec le bon ID
     const finalRows = [];
     for (let i = 0; i < options.length; i += 5) {
       const row = new ActionRowBuilder();
@@ -947,11 +951,10 @@ client.on('messageCreate', async (message) => {
 
     finalRows.push(finalAdminRow);
 
-    // Mettre à jour le message avec les bons IDs
     await betMessage.edit({ embeds: [embed], components: finalRows });
 
-    // Sauvegarder le pari avec l'ID du message du pari
-    bets[betMessage.id] = {
+    const newBet = new Bet({
+      messageId: betMessage.id,
       question,
       options,
       initialOdds: odds,
@@ -960,68 +963,33 @@ client.on('messageCreate', async (message) => {
       channelId: message.channel.id,
       totalPool: 0,
       status: 'open',
-      createdAt: Date.now(),
-      closingTime: closingTimestamp,
+      createdAt: new Date(),
+      closingTime: closingTime,
       reminderSent: false
-    };
-    saveData();
+    });
+    await newBet.save();
 
     let replyText = `✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``;
     
     if (closingTime) {
-      replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${closingTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
+      const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+        timeZone: 'Europe/Paris',
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
+      });
+      replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${parisTimeStr}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
       
-      // Programmer la clôture automatique
       const timeUntilClosing = closingTimestamp - Date.now();
       if (timeUntilClosing > 0) {
         setTimeout(async () => {
-          const bet = bets[betMessage.id];
-          if (bet && bet.status === 'open') {
-            bet.status = 'locked';
-            saveData();
-            
-            try {
-              const channel = await client.channels.fetch(bet.channelId);
-              const msg = await channel.messages.fetch(betMessage.id);
-              
-              const lockedEmbed = EmbedBuilder.from(msg.embeds[0])
-                .setColor('#FFA500')
-                .setFields(
-                  msg.embeds[0].fields.filter(f => f.name !== '📈 Statut').concat([
-                    { name: '📈 Statut', value: '🔒 Clôturé (en attente de validation)', inline: true },
-                    { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
-                    { name: '👥 Parieurs', value: `${Object.keys(bet.bettors).length}`, inline: true }
-                  ])
-                );
-              
-              // Retirer les boutons de paris
-              const lockedRows = msg.components.slice(-1); // Garder seulement le bouton admin
-              await msg.edit({ embeds: [lockedEmbed], components: lockedRows });
-              
-              await msg.reply('🔒 **Les paris sont maintenant clôturés !** Le match est en cours. En attente de validation du résultat...');
-            } catch (error) {
-              console.error('Erreur lors de la clôture automatique:', error);
-            }
-          }
+          await closeBetAutomatically(betMessage.id);
         }, timeUntilClosing);
         
-        // Programmer le rappel 1h avant
         const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
         if (oneHourBefore > 0) {
           setTimeout(async () => {
-            const bet = bets[betMessage.id];
-            if (bet && bet.status === 'open' && !bet.reminderSent) {
-              bet.reminderSent = true;
-              saveData();
-              
-              try {
-                const channel = await client.channels.fetch(bet.channelId);
-                const msg = await channel.messages.fetch(betMessage.id);
-                await msg.reply('⏰ **Rappel** : Plus qu\'**1 heure** avant la clôture des paris ! Placez vos mises maintenant !');
-              } catch (error) {
-                console.error('Erreur lors de l\'envoi du rappel:', error);
-              }
-            }
+            await sendReminder(betMessage.id);
           }, oneHourBefore);
         }
       }
@@ -1030,21 +998,18 @@ client.on('messageCreate', async (message) => {
     message.reply(replyText);
   }
 
-  // Commande pour créer un PARI BOOSTÉ (PEACE & BOOST)
   if (command === '!boost') {
-    // Vérifier si l'utilisateur a le rôle requis
     const member = await message.guild.members.fetch(message.author.id);
     const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
 
     if (!hasRole) {
-      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris boostés.\n\n_Demandez à un administrateur de vous donner ce rôle._`);
+      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris boostés.`);
     }
 
-    // Format: !boost Nom de l'event | 5.5 | 21h30
     const content = message.content.slice(command.length).trim();
     
     if (!content.includes('|')) {
-      return message.reply('❌ Format incorrect. Utilisez : `!boost Nom de l\'event | cote | heure`\n\nExemple: `!boost Victoire du PSG | 5.5 | 21h30`');
+      return message.reply('❌ Format incorrect. Utilisez : `!boost Nom de l\'event | cote | heure`\n\nExemple: `!boost Victoire PSG | 5.5 | 21h30`');
     }
 
     const parts = content.split('|').map(p => p.trim());
@@ -1061,7 +1026,6 @@ client.on('messageCreate', async (message) => {
       return message.reply(`❌ La cote est invalide. Elle doit être >= 1.01`);
     }
 
-    // Calculer l'heure de clôture si fournie
     let closingTime = null;
     let closingTimestamp = null;
     
@@ -1075,10 +1039,12 @@ client.on('messageCreate', async (message) => {
         
         if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
           const now = new Date();
-          const closingDate = new Date(now);
+          const parisTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
+          
+          const closingDate = new Date(parisTime);
           closingDate.setHours(targetHour, targetMinute, 0, 0);
           
-          if (closingDate.getTime() <= now.getTime()) {
+          if (closingDate.getTime() <= parisTime.getTime()) {
             closingDate.setDate(closingDate.getDate() + 1);
           }
           
@@ -1088,9 +1054,8 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Créer l'embed ultra-visuel pour le BOOST
     const embed = new EmbedBuilder()
-      .setColor('#FF00FF') // Magenta/Rose flashy
+      .setColor('#FF00FF')
       .setTitle('⚡💎 PEACE & BOOST 💎⚡')
       .setDescription(`
 ╔════════════════════════════════╗
@@ -1114,24 +1079,28 @@ client.on('messageCreate', async (message) => {
         { name: '⚡', value: '⚡', inline: true }
       )
       .setFooter({ text: `🔥 PARI BOOSTÉ par ${message.author.tag} 🔥` })
-      .setTimestamp()
-      .setImage('https://media.tenor.com/images/f9c2f573e7c56c6be8b23b6e51e45e5a/tenor.gif'); // GIF flashy (optionnel)
+      .setTimestamp();
 
     if (closingTime) {
+      const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+        timeZone: 'Europe/Paris',
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
+      });
       embed.addFields({
         name: '⏰ Clôture',
-        value: `<t:${Math.floor(closingTimestamp / 1000)}:R> (**${closingTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })}**)`,
+        value: `${parisTimeStr} (<t:${Math.floor(closingTimestamp / 1000)}:R>)`,
         inline: false
       });
     }
 
-    // Créer le bouton ultra-visible
     const row = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId(`bet_PLACEHOLDER_0`)
           .setLabel(`🔥 PARIER SUR ${eventName.toUpperCase()} (${oddsValue}x) 🔥`)
-          .setStyle(ButtonStyle.Danger) // Rouge pour attirer l'attention
+          .setStyle(ButtonStyle.Danger)
           .setEmoji('💎')
       );
 
@@ -1146,7 +1115,6 @@ client.on('messageCreate', async (message) => {
 
     const betMessage = await message.channel.send({ embeds: [embed], components: [row, adminRow] });
 
-    // Mettre à jour avec les bons IDs
     const finalRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -1167,8 +1135,8 @@ client.on('messageCreate', async (message) => {
 
     await betMessage.edit({ embeds: [embed], components: [finalRow, finalAdminRow] });
 
-    // Sauvegarder le pari boosté
-    bets[betMessage.id] = {
+    const newBet = new Bet({
+      messageId: betMessage.id,
       question: `⚡ BOOST: ${eventName}`,
       options: [{ name: eventName, odds: oddsValue }],
       initialOdds: [oddsValue],
@@ -1177,59 +1145,34 @@ client.on('messageCreate', async (message) => {
       channelId: message.channel.id,
       totalPool: 0,
       status: 'open',
-      createdAt: Date.now(),
-      closingTime: closingTimestamp,
+      createdAt: new Date(),
+      closingTime: closingTime,
       reminderSent: false,
-      isBoosted: true // Marquer comme boosté
-    };
-    saveData();
+      isBoosted: true
+    });
+    await newBet.save();
 
     let replyText = `⚡💎 **PARI BOOSTÉ CRÉÉ !** 💎⚡\n🆔 ID : \`${betMessage.id}\`\n\n_Validez avec_ \`!valider ${betMessage.id} 1\` _(si gagné)_`;
     
     if (closingTime) {
-      replyText += `\n\n⏰ Clôture automatique à **${closingTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })}**`;
+      const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+        timeZone: 'Europe/Paris',
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
+      });
+      replyText += `\n\n⏰ Clôture automatique à **${parisTimeStr}**`;
       
-      // Programmer la clôture (même logique que pour les paris normaux)
       const timeUntilClosing = closingTimestamp - Date.now();
       if (timeUntilClosing > 0) {
         setTimeout(async () => {
-          const bet = bets[betMessage.id];
-          if (bet && bet.status === 'open') {
-            bet.status = 'locked';
-            saveData();
-            
-            try {
-              const channel = await client.channels.fetch(bet.channelId);
-              const msg = await channel.messages.fetch(betMessage.id);
-              
-              const lockedEmbed = EmbedBuilder.from(msg.embeds[0])
-                .setColor('#FFA500');
-              
-              await msg.edit({ embeds: [lockedEmbed], components: [finalAdminRow] });
-              await msg.reply('🔒 **PARI BOOSTÉ CLÔTURÉ !** En attente du résultat...');
-            } catch (error) {
-              console.error('Erreur lors de la clôture:', error);
-            }
-          }
+          await closeBetAutomatically(betMessage.id);
         }, timeUntilClosing);
         
-        // Rappel 1h avant
         const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
         if (oneHourBefore > 0) {
           setTimeout(async () => {
-            const bet = bets[betMessage.id];
-            if (bet && bet.status === 'open' && !bet.reminderSent) {
-              bet.reminderSent = true;
-              saveData();
-              
-              try {
-                const channel = await client.channels.fetch(bet.channelId);
-                const msg = await channel.messages.fetch(betMessage.id);
-                await msg.reply('⏰🔥 **DERNIÈRE HEURE POUR LE BOOST !** Ne ratez pas cette cote exceptionnelle !');
-              } catch (error) {
-                console.error('Erreur rappel:', error);
-              }
-            }
+            await sendReminder(betMessage.id);
           }, oneHourBefore);
         }
       }
@@ -1238,65 +1181,6 @@ client.on('messageCreate', async (message) => {
     message.reply(replyText);
   }
 
-  // Commande pour valider un pari
-  if (command === '!valider' || command === '!resolve') {
-    const betMessageId = args[1];
-    const winningOptionsStr = args.slice(2).join(' ');
-
-    if (!betMessageId || !winningOptionsStr) {
-      return message.reply('❌ Format incorrect. Utilisez : `!valider [messageId] [numéros des options]`\nEx: `!valider 123456789 1 3` pour valider les options 1 et 3');
-    }
-
-    const bet = bets[betMessageId];
-
-    if (!bet) {
-      return message.reply('❌ Pari introuvable. Vérifiez l\'ID du message.');
-    }
-
-    // Vérifier si l'utilisateur a le rôle requis
-    const member = await message.guild.members.fetch(message.author.id);
-    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
-
-    if (!hasRole) {
-      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour valider des paris.`);
-    }
-
-    if (bet.creator !== message.author.id) {
-      return message.reply('❌ Seul le créateur du pari peut le valider.');
-    }
-
-    if (bet.status !== 'open') {
-      return message.reply('❌ Ce pari a déjà été résolu.');
-    }
-
-    // Parser les options gagnantes
-    const winningOptions = winningOptionsStr.split(/[\s,]+/).map(n => parseInt(n) - 1);
-    
-    // Vérifier que les options sont valides
-    if (winningOptions.some(opt => isNaN(opt) || opt < 0 || opt >= bet.options.length)) {
-      return message.reply('❌ Numéro d\'option invalide.');
-    }
-
-    // Créer les boutons de confirmation
-    const confirmRow = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`validate_${betMessageId}_${winningOptions.join('_')}`)
-          .setLabel(`Confirmer : ${winningOptions.map(i => bet.options[i].name).join(', ')}`)
-          .setStyle(ButtonStyle.Success)
-          .setEmoji('✅')
-      );
-
-    const confirmEmbed = new EmbedBuilder()
-      .setColor('#FFA500')
-      .setTitle('⚠️ Confirmation de validation')
-      .setDescription(`Êtes-vous sûr de vouloir valider ces options gagnantes ?\n\n${winningOptions.map(i => `• **${bet.options[i].name}** (Cote: ${bet.initialOdds[i]}x)`).join('\n')}\n\n**Cette action est irréversible.**`)
-      .setFooter({ text: 'Cliquez sur le bouton pour confirmer' });
-
-    await message.reply({ embeds: [confirmEmbed], components: [confirmRow] });
-  }
-
-  // Commande d'aide
   if (command === '!aide' || command === '!help') {
     const helpEmbed = new EmbedBuilder()
       .setColor('#0099ff')
@@ -1315,6 +1199,7 @@ client.on('messageCreate', async (message) => {
         { name: '!boost', value: '⚡💎 **PARI SPÉCIAL BOOSTÉ** 💎⚡\nFormat: `!boost Nom de l\'event | cote | heure`\nExemple: `!boost Victoire PSG | 5.5 | 21h30`\nUne seule option, cote élevée, visuel attractif !' },
         { name: '!valider [id] [options]', value: 'Valide un pari\nEx: `!valider 123456789 1 3`' },
         { name: '!modifier-solde @user montant', value: 'Modifie le solde d\'un utilisateur\nEx: `!modifier-solde @Jean 500`' },
+        { name: '!annuler-tout', value: '🚫 Annule TOUS les paris actifs et rembourse tout le monde' },
         { name: '⏰ Clôture automatique', value: 'Heure absolue (ex: 21h30 = clôture à 21h30)\nRappel automatique 1h avant\nPari reste ouvert pour validation après clôture' },
         { name: '📊 Cotes', value: 'Gain = Mise × Cote\nExemple: 50€ × 2.5 = 125€ de gain' }
       )
@@ -1324,10 +1209,132 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// Gestion des erreurs
+// Gestion du bouton de validation
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton()) return;
+  
+  const [action, betId, ...params] = interaction.customId.split('_');
+  
+  if (action === 'validate') {
+    const winningOptions = params.map(p => parseInt(p));
+    const bet = await Bet.findOne({ messageId: betId });
+
+    if (!bet) {
+      return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
+    }
+
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+    if (!hasRole) {
+      return interaction.reply({ content: `❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"**.`, ephemeral: true });
+    }
+
+    if (bet.creator !== interaction.user.id) {
+      return interaction.reply({ content: '❌ Seul le créateur du pari peut le valider.', ephemeral: true });
+    }
+
+    if (bet.status === 'resolved' || bet.status === 'cancelled') {
+      return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
+    }
+
+    const winners = Object.entries(bet.bettors).filter(([userId, betData]) => 
+      winningOptions.includes(betData.option)
+    );
+
+    if (winners.length === 0) {
+      await interaction.reply('⚠️ Aucun gagnant pour ce pari. Les mises sont perdues.');
+      
+      for (const [userId, betData] of Object.entries(bet.bettors)) {
+        const user = await getUser(userId);
+        user.stats.totalBets++;
+        user.stats.lostBets++;
+        user.history.push({
+          betId: bet.messageId,
+          question: bet.question,
+          option: bet.options[betData.option].name,
+          amount: betData.amount,
+          winnings: 0,
+          result: 'lost',
+          timestamp: new Date()
+        });
+        await user.save();
+      }
+      
+      bet.status = 'resolved';
+      await bet.save();
+      
+      const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+        .setColor('#FF0000')
+        .setTitle('📊 Pari Terminé - Aucun Gagnant');
+      
+      await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+      return;
+    }
+
+    let distributionText = '🏆 **Résultats du pari**\n\n';
+    distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
+
+    // CORRECTION: Winrate pour les perdants
+    for (const [userId, betData] of Object.entries(bet.bettors)) {
+      const user = await getUser(userId);
+      user.stats.totalBets++;
+      
+      if (winningOptions.includes(betData.option)) {
+        user.stats.wonBets++;
+        const odds = bet.initialOdds[betData.option];
+        const winnings = calculatePotentialWin(betData.amount, odds);
+        const profit = winnings - betData.amount;
+        
+        user.balance += winnings;
+        distributionText += `• <@${userId}> : Misé ${betData.amount}€ (cote ${odds}x) → Gagné **${winnings}€** (profit: +${profit}€)\n`;
+        
+        user.history.push({
+          betId: bet.messageId,
+          question: bet.question,
+          option: bet.options[betData.option].name,
+          amount: betData.amount,
+          winnings: winnings,
+          result: 'won',
+          timestamp: new Date()
+        });
+      } else {
+        // CORRECTION: Compter les perdants
+        user.stats.lostBets++;
+        
+        user.history.push({
+          betId: bet.messageId,
+          question: bet.question,
+          option: bet.options[betData.option].name,
+          amount: betData.amount,
+          winnings: 0,
+          result: 'lost',
+          timestamp: new Date()
+        });
+      }
+      
+      await user.save();
+    }
+
+    bet.status = 'resolved';
+    bet.winningOptions = winningOptions;
+    await bet.save();
+
+    const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+      .setColor('#00FF00')
+      .setTitle('📊 Pari Terminé')
+      .addFields(
+        { name: '✅ Résultat', value: winningOptions.map(i => `${bet.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
+        { name: '💵 Total distribué', value: `${winners.reduce((sum, [_, betData]) => sum + calculatePotentialWin(betData.amount, bet.initialOdds[betData.option]), 0)}€`, inline: true }
+      );
+
+    await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+    await interaction.reply(distributionText);
+  }
+});
+
 client.on('error', console.error);
 
-// Connexion du bot
 client.login(config.token);
 
 setInterval(() => {
@@ -1340,5 +1347,4 @@ setInterval(() => {
   } catch (err) {
     console.log('⚠️ Erreur ping');
   }
-}, 5 * 60 * 1000); // toutes les 5 minutes
-
+}, 5 * 60 * 1000);
