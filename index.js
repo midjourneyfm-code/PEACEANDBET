@@ -1578,27 +1578,31 @@ if (action === 'validate') {
     console.log(`✅ Validation terminée - ${winners.length} gagnants, ${totalDistributed}€ distribués`);
   }
 
-  if (action === 'boostloose' && params[0] === 'confirm') {
+if (action === 'boostloose' && params[0] === 'confirm') {
   const betId = params[1];
+  
+  // IMPORTANT : Différer la réponse pour avoir plus de temps
+  await interaction.deferReply();
+  
   const bet = await Bet.findOne({ messageId: betId });
 
   if (!bet) {
-    return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
+    return interaction.editReply({ content: '❌ Ce pari n\'existe plus.' });
   }
 
   const member = await interaction.guild.members.fetch(interaction.user.id);
   const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
 
   if (!hasRole) {
-    return interaction.reply({ content: `❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"**.`, ephemeral: true });
+    return interaction.editReply({ content: `❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"**.` });
   }
 
   if (bet.creator !== interaction.user.id) {
-    return interaction.reply({ content: '❌ Seul le créateur du pari peut le valider.', ephemeral: true });
+    return interaction.editReply({ content: '❌ Seul le créateur du pari peut le valider.' });
   }
 
   if (bet.status === 'resolved' || bet.status === 'cancelled') {
-    return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
+    return interaction.editReply({ content: '❌ Ce pari a déjà été résolu ou annulé.' });
   }
 
   // Convertir bettors en objet plain
@@ -1607,7 +1611,7 @@ if (action === 'validate') {
     : (bet.bettors || {});
 
   if (Object.keys(bettorsObj).length === 0) {
-    return interaction.reply({ content: '⚠️ Aucun parieur sur ce boost.', ephemeral: true });
+    return interaction.editReply({ content: '⚠️ Aucun parieur sur ce boost.' });
   }
 
   let distributionText = '⚡💎 **RÉSULTAT DU PARI BOOSTÉ** 💎⚡\n\n';
@@ -1659,7 +1663,7 @@ if (action === 'validate') {
     console.error('Erreur mise à jour message:', error);
   }
 
-  await interaction.reply(distributionText);
+  await interaction.editReply(distributionText);
   console.log(`✅ Pari boosté validé comme PERDU - ${Object.keys(bettorsObj).length} parieurs affectés`);
 }
 });
