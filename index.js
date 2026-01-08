@@ -380,18 +380,46 @@ client.on('interactionCreate', async (interaction) => {
       const odds = bet.initialOdds[optIndex];
       const potentialWin = calculatePotentialWin(amount, odds);
 
-      bet.bettors[interaction.user.id] = {
-        option: optIndex,
-        amount: amount,
-        username: interaction.user.tag,
-        odds: odds
-      };
-      
+      // Déduire du solde de l'utilisateur
       user.balance -= amount;
-      bet.markModified('bettors');
-      bet.totalPool += amount;
       await user.save();
-      await bet.save();
+
+      // ⚡ OPÉRATION ATOMIQUE : Mise à jour directe dans MongoDB
+      // Cela évite les race conditions en modifiant directement la DB
+      const updateResult = await Bet.findOneAndUpdate(
+        { 
+          messageId: betId,
+          [`bettors.${interaction.user.id}`]: { $exists: false } // Vérifier qu'il n'a pas déjà parié
+        },
+        { 
+          $set: { 
+            [`bettors.${interaction.user.id}`]: {
+              option: optIndex,
+              amount: amount,
+              username: interaction.user.tag,
+              odds: odds
+            }
+          },
+          $inc: { totalPool: amount } // Incrémenter atomiquement
+        },
+        { 
+          new: true, // Retourner le document mis à jour
+          runValidators: true 
+        }
+      );
+
+      // Vérifier que la mise à jour a réussi
+      if (!updateResult) {
+        // L'utilisateur a déjà parié (détecté par la condition $exists: false)
+        user.balance += amount; // Rembourser
+        await user.save();
+        return interaction.reply({ 
+          content: '❌ Erreur : vous avez déjà parié ou le pari n\'existe plus.', 
+          ephemeral: true 
+        });
+      }
+
+      console.log(`✅ Pari enregistré pour ${interaction.user.tag} - Total parieurs: ${Object.keys(updateResult.bettors).length}`);
 
       try {
         const channel = await client.channels.fetch(bet.channelId);
