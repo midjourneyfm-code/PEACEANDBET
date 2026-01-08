@@ -1298,6 +1298,62 @@ if (command === '!annuler-tout' || command === '!cancelall') {
 
   message.reply({ embeds: [embed] });
 }
+  if (command === '!boostloose' || command === '!boostperdu') {
+  const betMessageId = args[1];
+
+  if (!betMessageId) {
+    return message.reply('❌ Format incorrect. Utilisez : `!boostloose [messageId]`\nExemple: `!boostloose 123456789`');
+  }
+
+  const bet = await Bet.findOne({ messageId: betMessageId });
+
+  if (!bet) {
+    return message.reply('❌ Pari introuvable. Vérifiez l\'ID du message.');
+  }
+
+  const member = await message.guild.members.fetch(message.author.id);
+  const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+  if (!hasRole) {
+    return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour valider des paris.`);
+  }
+
+  if (bet.creator !== message.author.id) {
+    return message.reply('❌ Seul le créateur du pari peut le valider.');
+  }
+
+  if (!bet.isBoosted) {
+    return message.reply('❌ Cette commande est réservée aux paris boostés. Utilisez `!valider` pour les paris normaux.');
+  }
+
+  if (bet.status === 'resolved' || bet.status === 'cancelled') {
+    return message.reply('❌ Ce pari a déjà été résolu ou annulé.');
+  }
+
+  // Créer le bouton de confirmation
+  const confirmRow = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`boostloose_confirm_${betMessageId}`)
+        .setLabel(`❌ Confirmer : ${bet.options[0].name} PERDU`)
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('❌')
+    );
+
+  const confirmEmbed = new EmbedBuilder()
+    .setColor('#FF0000')
+    .setTitle('⚡💎 Confirmation Pari Boosté PERDU 💎⚡')
+    .setDescription(
+      `Êtes-vous sûr de déclarer ce pari boosté comme **PERDU** ?\n\n❌ **${bet.options[0].name}** (Cote: ${bet.initialOdds[0]}x)\n\n**Tous les parieurs perdront leur mise.**\n\n**Cette action est irréversible.**`
+    )
+    .addFields(
+      { name: '👥 Parieurs', value: `${bet.bettors ? Object.keys(bet.bettors).length : 0}`, inline: true },
+      { name: '💵 Mises totales', value: `${bet.totalPool}€`, inline: true }
+    )
+    .setFooter({ text: 'Cliquez sur le bouton pour confirmer' });
+
+  await message.reply({ embeds: [confirmEmbed], components: [confirmRow] });
+}
 
   if (command === '!aide' || command === '!help') {
     const helpEmbed = new EmbedBuilder()
@@ -1520,7 +1576,91 @@ if (action === 'validate') {
     await interaction.reply(distributionText);
 
     console.log(`✅ Validation terminée - ${winners.length} gagnants, ${totalDistributed}€ distribués`);
+
+  if (action === 'boostloose' && params[0] === 'confirm') {
+  const betId = params[1];
+  const bet = await Bet.findOne({ messageId: betId });
+
+  if (!bet) {
+    return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
   }
+
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+  if (!hasRole) {
+    return interaction.reply({ content: `❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"**.`, ephemeral: true });
+  }
+
+  if (bet.creator !== interaction.user.id) {
+    return interaction.reply({ content: '❌ Seul le créateur du pari peut le valider.', ephemeral: true });
+  }
+
+  if (bet.status === 'resolved' || bet.status === 'cancelled') {
+    return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
+  }
+
+  // Convertir bettors en objet plain
+  const bettorsObj = bet.bettors instanceof Map 
+    ? Object.fromEntries(bet.bettors) 
+    : (bet.bettors || {});
+
+  if (Object.keys(bettorsObj).length === 0) {
+    return interaction.reply({ content: '⚠️ Aucun parieur sur ce boost.', ephemeral: true });
+  }
+
+  let distributionText = '⚡💎 **RÉSULTAT DU PARI BOOSTÉ** 💎⚡\n\n';
+  distributionText += `❌ **${bet.options[0].name}** - PERDU (Cote ${bet.initialOdds[0]}x)\n\n`;
+  distributionText += `💔 Tous les parieurs ont perdu leur mise.\n\n`;
+
+  // Mettre à jour les stats de tous les parieurs (tous perdants)
+  for (const [userId, betData] of Object.entries(bettorsObj)) {
+    const user = await getUser(userId);
+    user.stats.totalBets++;
+    user.stats.lostBets++;
+
+    distributionText += `• <@${userId}> : Misé ${betData.amount}€ ❌ **Perdu**\n`;
+
+    user.history.push({
+      betId: bet.messageId,
+      question: bet.question,
+      option: bet.options[0].name,
+      amount: betData.amount,
+      winnings: 0,
+      result: 'lost',
+      timestamp: new Date()
+    });
+
+    await user.save();
+    console.log(`❌ ${userId} a perdu ${betData.amount}€ sur le boost`);
+  }
+
+  bet.status = 'resolved';
+  bet.winningOptions = []; // Aucune option gagnante
+  await bet.save();
+
+  // Mettre à jour le message du pari
+  try {
+    const channel = await client.channels.fetch(bet.channelId);
+    const betMessage = await channel.messages.fetch(betId);
+
+    const updatedEmbed = EmbedBuilder.from(betMessage.embeds[0])
+      .setColor('#FF0000')
+      .setTitle('⚡💎 Pari Boosté Terminé - PERDU 💎⚡')
+      .addFields(
+        { name: '❌ Résultat', value: `${bet.options[0].name} (${bet.initialOdds[0]}x)`, inline: true },
+        { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
+        { name: '👥 Parieurs', value: `${Object.keys(bettorsObj).length}`, inline: true }
+      );
+
+    await betMessage.edit({ embeds: [updatedEmbed], components: [] });
+  } catch (error) {
+    console.error('Erreur mise à jour message:', error);
+  }
+
+  await interaction.reply(distributionText);
+  console.log(`✅ Pari boosté validé comme PERDU - ${Object.keys(bettorsObj).length} parieurs affectés`);
+}
 });
 
 client.on('error', console.error);
