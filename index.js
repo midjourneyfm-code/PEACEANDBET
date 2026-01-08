@@ -1576,6 +1576,7 @@ if (action === 'validate') {
     await interaction.reply(distributionText);
 
     console.log(`✅ Validation terminée - ${winners.length} gagnants, ${totalDistributed}€ distribués`);
+  }
 
   if (action === 'boostloose' && params[0] === 'confirm') {
   const betId = params[1];
