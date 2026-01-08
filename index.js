@@ -1297,17 +1297,28 @@ client.on('interactionCreate', async (interaction) => {
   
   const [action, betId, ...params] = interaction.customId.split('_');
   
-  if (action === 'validate') {
+if (action === 'validate') {
     const winningOptions = params.map(p => parseInt(p));
     const bet = await Bet.findOne({ messageId: betId });
 
     if (!bet) {
       return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
-  }
+    }
 
-    if (!bet.bettors || Object.keys(bet.bettors).length === 0) {
+    console.log('🔍 Validation - Type de bettors:', typeof bet.bettors);
+    console.log('🔍 Validation - Bettors:', bet.bettors);
+    console.log('🔍 Validation - Nombre de clés:', bet.bettors ? Object.keys(bet.bettors).length : 0);
+
+    // Convertir bet.bettors en objet plain si c'est une Map MongoDB
+    const bettorsObj = bet.bettors instanceof Map 
+      ? Object.fromEntries(bet.bettors) 
+      : (bet.bettors || {});
+
+    console.log('🔍 Après conversion - Nombre de parieurs:', Object.keys(bettorsObj).length);
+
+    if (Object.keys(bettorsObj).length === 0) {
       return interaction.reply({ content: '⚠️ Aucun parieur sur ce match.', ephemeral: true });
-  }
+    }
 
     const member = await interaction.guild.members.fetch(interaction.user.id);
     const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
@@ -1324,14 +1335,20 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
     }
 
-    const winners = Object.entries(bet.bettors).filter(([userId, betData]) => 
-      winningOptions.includes(betData.option)
-    );
+    // Filtrer les gagnants
+    const winners = Object.entries(bettorsObj).filter(([userId, betData]) => {
+      console.log(`🔍 Vérif ${userId} - option: ${betData.option}, gagnantes: ${winningOptions.join(',')}`);
+      return winningOptions.includes(betData.option);
+    });
 
+    console.log(`🏆 Nombre de gagnants: ${winners.length}`);
+
+    // CAS 1 : Aucun gagnant
     if (winners.length === 0) {
       await interaction.reply('⚠️ Aucun gagnant pour ce pari. Les mises sont perdues.');
       
-        await user.save();
+      // Mettre à jour les stats de tous les parieurs (tous perdants)
+      for (const [userId, betData] of Object.entries(bettorsObj)) {
         const user = await getUser(userId);
         user.stats.totalBets++;
         user.stats.lostBets++;
@@ -1348,6 +1365,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       
       bet.status = 'resolved';
+      bet.winningOptions = winningOptions;
       await bet.save();
       
       const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
@@ -1358,20 +1376,27 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // CAS 2 : Il y a des gagnants
     let distributionText = '🏆 **Résultats du pari**\n\n';
     distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
 
-    // CORRECTION: Winrate pour les perdants
-    for (const [userId, betData] of Object.entries(bet.bettors)) {
+    let totalDistributed = 0;
+
+    // Traiter tous les parieurs
+    for (const [userId, betData] of Object.entries(bettorsObj)) {
       const user = await getUser(userId);
       user.stats.totalBets++;
       
       if (winningOptions.includes(betData.option)) {
+        // GAGNANT
         user.stats.wonBets++;
         const odds = bet.initialOdds[betData.option];
         const winnings = calculatePotentialWin(betData.amount, odds);
         const profit = winnings - betData.amount;
+        
         user.balance += winnings;
+        totalDistributed += winnings;
+        
         distributionText += `• <@${userId}> : Misé ${betData.amount}€ (cote ${odds}x) → Gagné **${winnings}€** (profit: +${profit}€)\n`;
         
         user.history.push({
@@ -1383,8 +1408,10 @@ client.on('interactionCreate', async (interaction) => {
           result: 'won',
           timestamp: new Date()
         });
+
+        console.log(`✅ ${userId} a gagné ${winnings}€`);
       } else {
-        // CORRECTION: Compter les perdants
+        // PERDANT
         user.stats.lostBets++;
         
         user.history.push({
@@ -1396,6 +1423,8 @@ client.on('interactionCreate', async (interaction) => {
           result: 'lost',
           timestamp: new Date()
         });
+
+        console.log(`❌ ${userId} a perdu ${betData.amount}€`);
       }
       
       await user.save();
@@ -1410,12 +1439,15 @@ client.on('interactionCreate', async (interaction) => {
       .setTitle('📊 Pari Terminé')
       .addFields(
         { name: '✅ Résultat', value: winningOptions.map(i => `${bet.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
-        { name: '💵 Total distribué', value: `${winners.reduce((sum, [_, betData]) => sum + calculatePotentialWin(betData.amount, bet.initialOdds[betData.option]), 0)}€`, inline: true }
+        { name: '💵 Total distribué', value: `${totalDistributed}€`, inline: true },
+        { name: '👥 Gagnants', value: `${winners.length}`, inline: true }
       );
 
     await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
     await interaction.reply(distributionText);
-  });
+
+    console.log(`✅ Validation terminée - ${winners.length} gagnants, ${totalDistributed}€ distribués`);
+  }
 
 client.on('error', console.error);
 
