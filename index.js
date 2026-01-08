@@ -1448,6 +1448,7 @@ if (action === 'validate') {
 
     console.log(`✅ Validation terminée - ${winners.length} gagnants, ${totalDistributed}€ distribués`);
   }
+});
 
 client.on('error', console.error);
 
