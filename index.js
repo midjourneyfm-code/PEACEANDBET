@@ -1226,6 +1226,79 @@ if (command === '!annuler-tout' || command === '!cancelall') {
     message.reply(replyText);
   }
 
+  if (command === '!lock' || command === '!verrouiller') {
+  const betMessageId = args[1];
+
+  if (!betMessageId) {
+    return message.reply('❌ Format incorrect. Utilisez : `!lock [messageId]`\nExemple: `!lock 123456789`');
+  }
+
+  const bet = await Bet.findOne({ messageId: betMessageId });
+
+  if (!bet) {
+    return message.reply('❌ Pari introuvable. Vérifiez l\'ID du message.');
+  }
+
+  const member = await message.guild.members.fetch(message.author.id);
+  const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+  if (!hasRole) {
+    return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour verrouiller des paris.`);
+  }
+
+  if (bet.creator !== message.author.id) {
+    return message.reply('❌ Seul le créateur du pari peut le verrouiller.');
+  }
+
+  if (bet.status === 'locked') {
+    return message.reply('⚠️ Ce pari est déjà verrouillé.');
+  }
+
+  if (bet.status !== 'open') {
+    return message.reply('❌ Ce pari ne peut pas être verrouillé (déjà résolu ou annulé).');
+  }
+
+  bet.status = 'locked';
+  await bet.save();
+
+  try {
+    const channel = await client.channels.fetch(bet.channelId);
+    const msg = await channel.messages.fetch(betMessageId);
+    
+    const lockedEmbed = EmbedBuilder.from(msg.embeds[0]).setColor('#FFA500');
+    const fields = msg.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
+    const bettorsCount = bet.bettors ? Object.keys(bet.bettors).length : 0;
+    
+    fields.push(
+      { name: '📈 Statut', value: '🔒 Clôturé (en attente de validation)', inline: true },
+      { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
+      { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
+    );
+    lockedEmbed.setFields(fields);
+    
+    const adminRow = msg.components[msg.components.length - 1];
+    await msg.edit({ embeds: [lockedEmbed], components: [adminRow] });
+    
+    await msg.reply('🔒 **Les paris sont maintenant clôturés manuellement !** En attente de validation du résultat...');
+  } catch (error) {
+    console.error('Erreur verrouillage:', error);
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor('#FFA500')
+    .setTitle('🔒 Pari Verrouillé')
+    .setDescription(`Le pari \`${betMessageId}\` a été verrouillé avec succès.`)
+    .addFields(
+      { name: '📊 Question', value: bet.question },
+      { name: '👥 Parieurs', value: `${bet.bettors ? Object.keys(bet.bettors).length : 0}`, inline: true },
+      { name: '💵 Cagnotte', value: `${bet.totalPool}€`, inline: true }
+    )
+    .setFooter({ text: `Verrouillé par ${message.author.tag}` })
+    .setTimestamp();
+
+  message.reply({ embeds: [embed] });
+}
+
   if (command === '!aide' || command === '!help') {
     const helpEmbed = new EmbedBuilder()
       .setColor('#0099ff')
