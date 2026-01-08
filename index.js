@@ -104,12 +104,12 @@ function calculatePotentialWin(amount, odds) {
 async function closeBetAutomatically(messageId) {
   try {
     const bet = await Bet.findOne({ messageId });
-    if (!bet || bet.status !== 'open') return;
+    if (!bet || updateResult.status !== 'open') return;
     
-    bet.status = 'locked';
+    updateResult.status = 'locked';
     await bet.save();
     
-    const channel = await client.channels.fetch(bet.channelId);
+    const channel = await client.channels.fetch(updateResult.channelId);
     const msg = await channel.messages.fetch(messageId);
     
     const lockedEmbed = EmbedBuilder.from(msg.embeds[0]).setColor('#FFA500');
@@ -117,7 +117,7 @@ async function closeBetAutomatically(messageId) {
     const bettorsCount = bet.bettors ? Object.keys(bet.bettors).length : 0;
     fields.push(
       { name: '📈 Statut', value: '🔒 Clôturé (en attente de validation)', inline: true },
-      { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
+      { name: '💵 Total des mises', value: `${updateResult.totalPool}€`, inline: true },
       { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
     );
     lockedEmbed.setFields(fields);
@@ -133,12 +133,12 @@ async function closeBetAutomatically(messageId) {
 async function sendReminder(messageId) {
   try {
     const bet = await Bet.findOne({ messageId });
-    if (!bet || bet.status !== 'open' || bet.reminderSent) return;
+    if (!bet || updateResult.status !== 'open' || bet.reminderSent) return;
     
     bet.reminderSent = true;
     await bet.save();
     
-    const channel = await client.channels.fetch(bet.channelId);
+    const channel = await client.channels.fetch(updateResult.channelId);
     const msg = await channel.messages.fetch(messageId);
     
     if (bet.isBoosted) {
@@ -172,7 +172,7 @@ client.once('ready', async () => {
           await sendReminder(bet.messageId);
         }, oneHourBefore);
       }
-    } else if (bet.status === 'open') {
+    } else if (updateResult.status === 'open') {
       await closeBetAutomatically(bet.messageId);
     }
   }
@@ -198,17 +198,17 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Vous avez déjà parié sur ce match ! Vous ne pouvez parier qu\'une seule fois.', ephemeral: true });
       }
 
-      if (bet.status === 'locked') {
+      if (updateResult.status === 'locked') {
         return interaction.reply({ content: '❌ Les paris sont clôturés. Le match est en cours !', ephemeral: true });
       }
 
-      if (bet.status !== 'open') {
+      if (updateResult.status !== 'open') {
         return interaction.reply({ content: '❌ Ce pari est fermé.', ephemeral: true });
       }
 
       const modal = new ModalBuilder()
         .setCustomId(`bet_modal_${betId}_${optionIndex}`)
-        .setTitle(`Parier sur ${bet.options[optionIndex].name}`);
+        .setTitle(`Parier sur ${updateResult.options[optionIndex].name}`);
 
       const amountInput = new TextInputBuilder()
         .setCustomId('amount')
@@ -243,7 +243,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Seul le créateur du pari peut l\'annuler.', ephemeral: true });
       }
 
-      if (bet.status === 'resolved' || bet.status === 'cancelled') {
+      if (updateResult.status === 'resolved' || updateResult.status === 'cancelled') {
         return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
       }
 
@@ -257,7 +257,7 @@ client.on('interactionCreate', async (interaction) => {
 }
 
 
-      bet.status = 'cancelled';
+      updateResult.status = 'cancelled';
       await bet.save();
 
       const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
@@ -351,11 +351,11 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
       }
 
-      if (bet.status === 'locked') {
+      if (updateResult.status === 'locked') {
         return interaction.reply({ content: '❌ Les paris sont clôturés. Le match est en cours !', ephemeral: true });
       }
 
-      if (bet.status !== 'open') {
+      if (updateResult.status !== 'open') {
         return interaction.reply({ content: '❌ Ce pari est fermé.', ephemeral: true });
       }
 
@@ -422,7 +422,7 @@ client.on('interactionCreate', async (interaction) => {
       console.log(`✅ Pari enregistré pour ${interaction.user.tag} - Total parieurs: ${Object.keys(updateResult.bettors).length}`);
 
       try {
-        const channel = await client.channels.fetch(bet.channelId);
+        const channel = await client.channels.fetch(updateResult.channelId);
         const betMessage = await channel.messages.fetch(betId);
         
         const updatedBet = await Bet.findOne({ messageId: betId });
@@ -431,15 +431,15 @@ client.on('interactionCreate', async (interaction) => {
         const fields = betMessage.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
         fields.push(
           { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
-          { name: '📈 Statut', value: bet.status === 'open' ? '🟢 En cours' : '🔒 Clôturé', inline: true },
-          { name: '💵 Total des mises', value: `${bet.totalPool}€`, inline: true },
+          { name: '📈 Statut', value: updateResult.status === 'open' ? '🟢 En cours' : '🔒 Clôturé', inline: true },
+          { name: '💵 Total des mises', value: `${updateResult.totalPool}€`, inline: true },
           { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
         );
         
         const updatedEmbed = EmbedBuilder.from(betMessage.embeds[0]).setFields(fields);
         await betMessage.edit({ embeds: [updatedEmbed] });
         
-        await betMessage.reply(`💰 **<@${interaction.user.id}>** a parié **${amount}€** sur **${bet.options[optIndex].name}** (cote ${odds}x) — Gain potentiel : **${potentialWin}€**`);
+        await betMessage.reply(`💰 **<@${interaction.user.id}>** a parié **${amount}€** sur **${updateResult.options[optIndex].name}** (cote ${odds}x) — Gain potentiel : **${potentialWin}€**`);
       } catch (error) {
         console.error('Erreur mise à jour:', error);
       }
@@ -447,7 +447,7 @@ client.on('interactionCreate', async (interaction) => {
       const successEmbed = new EmbedBuilder()
         .setColor('#00FF00')
         .setTitle('✅ Pari Placé !')
-        .setDescription(`Vous avez misé **${amount}€** sur **${bet.options[optIndex].name}**`)
+        .setDescription(`Vous avez misé **${amount}€** sur **${updateResult.options[optIndex].name}**`)
         .addFields(
           { name: 'Cote', value: `${odds}x`, inline: true },
           { name: 'Gain potentiel', value: `${potentialWin}€`, inline: true },
@@ -603,13 +603,13 @@ client.on('messageCreate', async (message) => {
       .setTimestamp();
 
     for (const bet of activeBets) {
-      const statusEmoji = bet.status === 'locked' ? '🔒' : '🟢';
-      const statusText = bet.status === 'locked' ? 'Clôturé' : 'Ouvert';
+      const statusEmoji = updateResult.status === 'locked' ? '🔒' : '🟢';
+      const statusText = updateResult.status === 'locked' ? 'Clôturé' : 'Ouvert';
       const bettorsCount = bet.bettors ? Object.keys(bet.bettors).length : 0;
       
-      const optionsList = bet.options.map((opt, i) => `${i + 1}. ${opt.name} (${bet.initialOdds[i]}x)`).join(', ');
+      const optionsList = updateResult.options.map((opt, i) => `${i + 1}. ${opt.name} (${bet.initialOdds[i]}x)`).join(', ');
       
-      let fieldValue = `**ID:** \`${bet.messageId}\`\n**Statut:** ${statusEmoji} ${statusText}\n**Options:** ${optionsList}\n**Parieurs:** ${bettorsCount}\n**Cagnotte:** ${bet.totalPool}€`;
+      let fieldValue = `**ID:** \`${bet.messageId}\`\n**Statut:** ${statusEmoji} ${statusText}\n**Options:** ${optionsList}\n**Parieurs:** ${bettorsCount}\n**Cagnotte:** ${updateResult.totalPool}€`;
       
       if (bet.closingTime) {
         fieldValue += `\n**Clôture:** <t:${Math.floor(new Date(bet.closingTime).getTime() / 1000)}:R>`;
@@ -737,11 +737,11 @@ if (command === '!annuler-tout' || command === '!cancelall') {
         }
       }
 
-      bet.status = 'cancelled';
+      updateResult.status = 'cancelled';
       await bet.save();
 
       try {
-        const channel = await client.channels.fetch(bet.channelId);
+        const channel = await client.channels.fetch(updateResult.channelId);
         const msg = await channel.messages.fetch(bet.messageId);
         
         const updatedEmbed = EmbedBuilder.from(msg.embeds[0])
@@ -796,13 +796,13 @@ if (command === '!annuler-tout' || command === '!cancelall') {
     }
 
     // CORRECTION: Autoriser la validation des paris 'locked'
-    if (bet.status === 'resolved' || bet.status === 'cancelled') {
+    if (updateResult.status === 'resolved' || updateResult.status === 'cancelled') {
       return message.reply('❌ Ce pari a déjà été résolu ou annulé.');
     }
 
     const winningOptions = winningOptionsStr.split(/[\s,]+/).map(n => parseInt(n) - 1);
     
-    if (winningOptions.some(opt => isNaN(opt) || opt < 0 || opt >= bet.options.length)) {
+    if (winningOptions.some(opt => isNaN(opt) || opt < 0 || opt >= updateResult.options.length)) {
       return message.reply('❌ Numéro d\'option invalide.');
     }
 
@@ -811,7 +811,7 @@ if (command === '!annuler-tout' || command === '!cancelall') {
       .addComponents(
         new ButtonBuilder()
           .setCustomId(`validate_${betMessageId}_${winningOptions.join('_')}`)
-          .setLabel(`Confirmer : ${winningOptions.map(i => bet.options[i].name).join(', ')}`)
+          .setLabel(`Confirmer : ${winningOptions.map(i => updateResult.options[i].name).join(', ')}`)
           .setStyle(ButtonStyle.Success)
           .setEmoji('✅')
       );
@@ -819,7 +819,7 @@ if (command === '!annuler-tout' || command === '!cancelall') {
     const confirmEmbed = new EmbedBuilder()
       .setColor('#FFA500')
       .setTitle('⚠️ Confirmation de validation')
-      .setDescription(`Êtes-vous sûr de vouloir valider ces options gagnantes ?\n\n${winningOptions.map(i => `• **${bet.options[i].name}** (Cote: ${bet.initialOdds[i]}x)`).join('\n')}\n\n**Cette action est irréversible.**`)
+      .setDescription(`Êtes-vous sûr de vouloir valider ces options gagnantes ?\n\n${winningOptions.map(i => `• **${updateResult.options[i].name}** (Cote: ${bet.initialOdds[i]}x)`).join('\n')}\n\n**Cette action est irréversible.**`)
       .setFooter({ text: 'Cliquez sur le bouton pour confirmer' });
 
     await message.reply({ embeds: [confirmEmbed], components: [confirmRow] });
@@ -1278,9 +1278,9 @@ if (command === '!annuler-tout' || command === '!cancelall') {
       .setTitle('🔍 Debug du Pari')
       .addFields(
         { name: 'ID', value: betMessageId },
-        { name: 'Statut', value: bet.status },
+        { name: 'Statut', value: updateResult.status },
         { name: 'Parieurs dans DB', value: `${bettorsArray.length}` },
-        { name: 'Total Pool', value: `${bet.totalPool}€` },
+        { name: 'Total Pool', value: `${updateResult.totalPool}€` },
         { name: 'Détails', value: bettorsArray.length > 0 ? 
           bettorsArray.map(([id, data]) => `<@${id}>: ${data.amount}€ sur option ${data.option + 1}`).join('\n') 
           : 'Aucun parieur' 
@@ -1320,7 +1320,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: '❌ Seul le créateur du pari peut le valider.', ephemeral: true });
     }
 
-    if (bet.status === 'resolved' || bet.status === 'cancelled') {
+    if (updateResult.status === 'resolved' || updateResult.status === 'cancelled') {
       return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
     }
 
@@ -1338,7 +1338,7 @@ client.on('interactionCreate', async (interaction) => {
         user.history.push({
           betId: bet.messageId,
           question: bet.question,
-          option: bet.options[betData.option].name,
+          option: updateResult.options[betData.option].name,
           amount: betData.amount,
           winnings: 0,
           result: 'lost',
@@ -1347,7 +1347,7 @@ client.on('interactionCreate', async (interaction) => {
         await user.save();
       }
       
-      bet.status = 'resolved';
+      updateResult.status = 'resolved';
       await bet.save();
       
       const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
@@ -1359,7 +1359,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     let distributionText = '🏆 **Résultats du pari**\n\n';
-    distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
+    distributionText += `Options gagnantes : ${winningOptions.map(i => updateResult.options[i].name).join(', ')}\n\n`;
 
     // CORRECTION: Winrate pour les perdants
     for (const [userId, betData] of Object.entries(bet.bettors)) {
@@ -1377,7 +1377,7 @@ client.on('interactionCreate', async (interaction) => {
         user.history.push({
           betId: bet.messageId,
           question: bet.question,
-          option: bet.options[betData.option].name,
+          option: updateResult.options[betData.option].name,
           amount: betData.amount,
           winnings: winnings,
           result: 'won',
@@ -1390,7 +1390,7 @@ client.on('interactionCreate', async (interaction) => {
         user.history.push({
           betId: bet.messageId,
           question: bet.question,
-          option: bet.options[betData.option].name,
+          option: updateResult.options[betData.option].name,
           amount: betData.amount,
           winnings: 0,
           result: 'lost',
@@ -1401,7 +1401,7 @@ client.on('interactionCreate', async (interaction) => {
       await user.save();
     }
 
-    bet.status = 'resolved';
+    updateResult.status = 'resolved';
     bet.winningOptions = winningOptions;
     await bet.save();
 
@@ -1409,7 +1409,7 @@ client.on('interactionCreate', async (interaction) => {
       .setColor('#00FF00')
       .setTitle('📊 Pari Terminé')
       .addFields(
-        { name: '✅ Résultat', value: winningOptions.map(i => `${bet.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
+        { name: '✅ Résultat', value: winningOptions.map(i => `${updateResult.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
         { name: '💵 Total distribué', value: `${winners.reduce((sum, [_, betData]) => sum + calculatePotentialWin(betData.amount, bet.initialOdds[betData.option]), 0)}€`, inline: true }
       );
 
