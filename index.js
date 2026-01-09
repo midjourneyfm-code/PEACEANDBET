@@ -788,17 +788,28 @@ client.on('messageCreate', async (message) => {
       .setTimestamp();
 
     if (recentHistory.length > 0) {
-      let historyText = '';
-      for (const h of recentHistory) {
-        const resultEmoji = h.result === 'won' ? '✅' : '❌';
+    let historyText = '';
+    for (const h of recentHistory) {
+      const resultEmoji = h.result === 'won' ? '✅' : '❌';
+      
+      // ⭐ DÉTECTER SI C'EST UN COMBINÉ
+      const isCombi = h.betId && h.betId.startsWith('combi_');
+      
+      if (isCombi) {
+        // ⭐ FORMAT POUR COMBINÉ
+        const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
+        historyText += `${resultEmoji} 🎰 **${h.question}** — ${h.option} — Mise: ${h.amount}€ — ${profit}\n`;
+      } else {
+        // ⭐ FORMAT POUR PARI SIMPLE (existant)
         const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
         historyText += `${resultEmoji} **${h.question}** — ${h.option} (${h.amount}€) ${profit}\n`;
       }
-      embed.addFields({ name: '📜 Historique Récent', value: historyText, inline: false });
     }
-
-    message.reply({ embeds: [embed] });
+    embed.addFields({ name: '📜 Historique Récent', value: historyText, inline: false });
   }
+
+  message.reply({ embeds: [embed] });
+}
 
   if (command === '!paris') {
     const activeBets = await Bet.find({ status: { $in: ['open', 'locked'] } });
@@ -1827,7 +1838,7 @@ if (command === '!annuler-tout' || command === '!cancelall') {
 }
 
 if (command === '!mes-combis' || command === '!mc') {
-    const combis = await Combi.find({ userId: message.author.id }).sort({ createdAt: -1 }).limit(10);
+    const combis = await Combi.find({ userId: message.author.id }).sort({ createdAt: -1 }).limit(3);
 
     if (combis.length === 0) {
       return message.reply('🔭 Vous n\'avez aucun combiné enregistré.');
