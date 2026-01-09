@@ -1844,7 +1844,22 @@ if (command === '!annuler-tout' || command === '!cancelall') {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
   
-  const [action, betId, ...params] = interaction.customId.split('_');
+  const parts = interaction.customId.split('_');
+const action = parts[0];
+
+// Si c'est un combiné, parser différemment
+let betId, params;
+if (action === 'combi') {
+  // Structure: combi_subaction_userId_timestamp
+  const subaction = parts[1];
+  const userId = parts[2];
+  params = [subaction, userId];
+  betId = null; // Pas de betId pour les combinés
+} else {
+  // Structure normale: action_betId_param1_param2...
+  betId = parts[1];
+  params = parts.slice(2);
+}
   
 if (action === 'validate') {
     const winningOptions = params.map(p => parseInt(p));
@@ -2003,6 +2018,12 @@ if (action === 'validate') {
     if (action === 'combi') {
   const subaction = params[0];
   const userId = params[1];
+
+  console.log('🔍 DEBUG COMBI');
+  console.log('subaction:', subaction);
+  console.log('userId (du bouton):', userId);
+  console.log('interaction.user.id:', interaction.user.id);
+  console.log('Match?', interaction.user.id === userId);
 
   // Vérifier que c'est bien l'utilisateur qui a créé le combiné
   if (interaction.user.id !== userId) {
