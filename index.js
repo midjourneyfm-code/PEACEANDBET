@@ -2307,100 +2307,135 @@ if (action === 'validate') {
     let distributionText = '🏆 **Résultats du pari**\n\n';
     distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
 
-    let totalDistributed = 0;
+// CAS 2 : Il y a des gagnants
+let distributionText = '🏆 **Résultats du pari**\n\n';
+distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
 
-    // Traiter tous les parieurs
-    for (const [userId, betData] of Object.entries(bettorsObj)) {
-      // IGNORER LES PARIEURS DE COMBINÉ
-      if (betData.isCombi || userId.includes('_combi')) {
-        console.log(`⏭️ ${userId} fait partie d'un combiné, ignoré`);
-        continue;
-      }
-      
-      const user = await getUser(userId);
-      user.stats.totalBets++;
-      
-      if (winningOptions.includes(betData.option)) {
-        // GAGNANT
-        user.stats.wonBets++;
-        const odds = bet.initialOdds[betData.option];
-        const winnings = calculatePotentialWin(betData.amount, odds);
-        const profit = winnings - betData.amount;
-        
-        user.balance += winnings;
-        totalDistributed += winnings;
-        
-        distributionText += `• <@${userId}> : Misé ${betData.amount}€ (cote ${odds}x) → Gagné **${winnings}€** (profit: +${profit}€)\n`;
-        
-        user.history.push({
-          betId: bet.messageId,
-          question: bet.question,
-          option: bet.options[betData.option].name,
-          amount: betData.amount,
-          winnings: winnings,
-          result: 'won',
-          timestamp: new Date()
-        });
+let totalDistributed = 0;
+let simpleWinners = [];
+let simpleLosers = [];
 
-        console.log(`✅ ${userId} a gagné ${winnings}€`);
-      } else {
-        // PERDANT
-        user.stats.lostBets++;
-        
-        user.history.push({
-          betId: bet.messageId,
-          question: bet.question,
-          option: bet.options[betData.option].name,
-          amount: betData.amount,
-          winnings: 0,
-          result: 'lost',
-          timestamp: new Date()
-        });
-
-        console.log(`❌ ${userId} a perdu ${betData.amount}€`);
-      }
-      
-      await user.save();
-    }
-
-    bet.status = 'resolved';
-    bet.winningOptions = winningOptions;
-    await bet.save();
-
-    const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-      .setColor('#00FF00')
-      .setTitle('📊 Pari Terminé')
-      .addFields(
-        { name: '✅ Résultat', value: winningOptions.map(i => `${bet.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
-        { name: '💵 Total distribué', value: `${totalDistributed}€`, inline: true },
-        { name: '👥 Gagnants', value: `${winners.length}`, inline: true }
-      );
-
-    await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
-    
-    // ⭐ VÉRIFIER LES COMBINÉS ET OBTENIR LES NOTIFICATIONS
-    const combiNotifications = await checkCombisForBet(betId, winningOptions);
-    
-    // ⭐ AJOUTER LES NOTIFICATIONS DE COMBINÉS AU MESSAGE
-    if (combiNotifications && combiNotifications.length > 0) {
-      distributionText += '\n\n🎰 **Combinés affectés :**\n';
-      
-      for (const notif of combiNotifications) {
-        if (notif.type === 'lost') {
-          distributionText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.totalBets} matchs, ${notif.stake}€ perdus)`;
-          distributionText += `\n   └─ Pari perdant : **${notif.question}** → ${notif.optionName}`;
-          distributionText += `\n   └─ ID : \`${notif.combiId}\``;
-        } else if (notif.type === 'progress') {
-          distributionText += `\n✅ <@${notif.userId}> : Combiné en cours (${notif.resolved}/${notif.total})`;
-          distributionText += `\n   └─ **${notif.question}** → ${notif.optionName} ✅`;
-          distributionText += `\n   └─ Gain potentiel : **${notif.potentialWin}€** (${notif.odds.toFixed(2)}x)`;
-        }
-      }
-    }
-    
-    await interaction.reply(distributionText);
+// Traiter tous les parieurs
+for (const [userId, betData] of Object.entries(bettorsObj)) {
+  // IGNORER LES PARIEURS DE COMBINÉ
+  if (betData.isCombi || userId.includes('_combi')) {
+    console.log(`⭐️ ${userId} fait partie d'un combiné, ignoré`);
+    continue;
+  }
   
-    console.log(`✅ Validation terminée - ${winners.length} gagnants, ${totalDistributed}€ distribués`);
+  const user = await getUser(userId);
+  user.stats.totalBets++;
+  
+  if (winningOptions.includes(betData.option)) {
+    // GAGNANT
+    user.stats.wonBets++;
+    const odds = bet.initialOdds[betData.option];
+    const winnings = calculatePotentialWin(betData.amount, odds);
+    const profit = winnings - betData.amount;
+    
+    user.balance += winnings;
+    totalDistributed += winnings;
+    
+    simpleWinners.push({
+      userId,
+      amount: betData.amount,
+      odds,
+      winnings,
+      profit
+    });
+    
+    user.history.push({
+      betId: bet.messageId,
+      question: bet.question,
+      option: bet.options[betData.option].name,
+      amount: betData.amount,
+      winnings: winnings,
+      result: 'won',
+      timestamp: new Date()
+    });
+
+    console.log(`✅ ${userId} a gagné ${winnings}€`);
+  } else {
+    // PERDANT
+    user.stats.lostBets++;
+    
+    simpleLosers.push({
+      userId,
+      amount: betData.amount,
+      option: bet.options[betData.option].name
+    });
+    
+    user.history.push({
+      betId: bet.messageId,
+      question: bet.question,
+      option: bet.options[betData.option].name,
+      amount: betData.amount,
+      winnings: 0,
+      result: 'lost',
+      timestamp: new Date()
+    });
+
+    console.log(`❌ ${userId} a perdu ${betData.amount}€`);
+  }
+  
+  await user.save();
+}
+
+// ⭐ AFFICHER LES GAGNANTS DE PARIS SIMPLES
+if (simpleWinners.length > 0) {
+  distributionText += '**💰 Gagnants (Paris simples) :**\n';
+  for (const w of simpleWinners) {
+    distributionText += `• <@${w.userId}> : Misé ${w.amount}€ (cote ${w.odds}x) → Gagné **${w.winnings}€** (profit: +${w.profit}€)\n`;
+  }
+  distributionText += '\n';
+}
+
+// ⭐ AFFICHER LES PERDANTS DE PARIS SIMPLES
+if (simpleLosers.length > 0) {
+  distributionText += '**❌ Perdants (Paris simples) :**\n';
+  for (const l of simpleLosers) {
+    distributionText += `• <@${l.userId}> : Perdu ${l.amount}€ sur ${l.option}\n`;
+  }
+  distributionText += '\n';
+}
+
+bet.status = 'resolved';
+bet.winningOptions = winningOptions;
+await bet.save();
+
+const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+  .setColor('#00FF00')
+  .setTitle('📊 Pari Terminé')
+  .addFields(
+    { name: '✅ Résultat', value: winningOptions.map(i => `${bet.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
+    { name: '💵 Total distribué', value: `${totalDistributed}€`, inline: true },
+    { name: '👥 Gagnants', value: `${simpleWinners.length}`, inline: true }
+  );
+
+await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+
+// ⭐ VÉRIFIER LES COMBINÉS ET OBTENIR LES NOTIFICATIONS
+const combiNotifications = await checkCombisForBet(betId, winningOptions);
+
+// ⭐ AJOUTER LES NOTIFICATIONS DE COMBINÉS AU MESSAGE
+if (combiNotifications && combiNotifications.length > 0) {
+  distributionText += '🎰 **Combinés affectés :**\n';
+  
+  for (const notif of combiNotifications) {
+    if (notif.type === 'lost') {
+      distributionText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.totalBets} matchs, ${notif.stake}€ perdus)`;
+      distributionText += `\n   └─ Pari perdant : **${notif.question}** → ${notif.optionName}`;
+    } else if (notif.type === 'progress') {
+      distributionText += `\n✅ <@${notif.userId}> : Combiné en progression (${notif.resolved}/${notif.total})`;
+      distributionText += `\n   └─ **${notif.question}** → ${notif.optionName} ✅`;
+      distributionText += `\n   └─ Gain potentiel : **${notif.potentialWin}€** (${notif.odds.toFixed(2)}x)`;
+    }
+  }
+}
+
+await interaction.reply(distributionText);
+
+console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${totalDistributed}€ distribués`);
   }
 
     if (action === 'combi') {
