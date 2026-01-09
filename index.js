@@ -2303,10 +2303,6 @@ if (action === 'validate') {
       return;
     }
 
-    // CAS 2 : Il y a des gagnants
-    let distributionText = '🏆 **Résultats du pari**\n\n';
-    distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
-
 // CAS 2 : Il y a des gagnants
 let distributionText = '🏆 **Résultats du pari**\n\n';
 distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
@@ -2436,7 +2432,7 @@ if (combiNotifications && combiNotifications.length > 0) {
 await interaction.reply(distributionText);
 
 console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${totalDistributed}€ distribués`);
-  }
+}
 
     if (action === 'combi') {
   const subaction = params[0];
