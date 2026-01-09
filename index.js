@@ -54,8 +54,27 @@ const betSchema = new mongoose.Schema({
   winningOptions: [Number]
 });
 
+const comboSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  selections: [{
+    betId: String,
+    betQuestion: String,
+    option: Number,
+    optionName: String,
+    odds: Number
+  }],
+  totalOdds: { type: Number, required: true },
+  amount: { type: Number, required: true },
+  potentialWin: { type: Number, required: true },
+  status: { type: String, default: 'pending' }, // pending, won, lost, partially_resolved
+  createdAt: { type: Date, default: Date.now },
+  resolvedBets: { type: Number, default: 0 },
+  isValid: { type: Boolean, default: true }
+});
+
 const User = mongoose.model('User', userSchema);
 const Bet = mongoose.model('Bet', betSchema);
+const Combo = mongoose.model('Combo', comboSchema);
 
 // ==================== CLIENT DISCORD ====================
 
@@ -148,6 +167,133 @@ async function sendReminder(messageId) {
     }
   } catch (error) {
     console.error('Erreur rappel:', error);
+  }
+}
+
+async function checkAndResolveCombos(betMessageId, winningOptions) {
+  try {
+    // Trouver tous les combinés qui contiennent ce pari
+    const affectedCombos = await Combo.find({
+      'selections.betId': betMessageId,
+      status: { $in: ['pending', 'partially_resolved'] }
+    });
+
+    for (const combo of affectedCombos) {
+      // Trouver la sélection concernée
+      const selection = combo.selections.find(sel => sel.betId === betMessageId);
+      
+      if (!selection) continue;
+
+      // Vérifier si le pari du combo est gagnant
+      const isWinning = winningOptions.includes(selection.option);
+
+      if (!isWinning) {
+        // ❌ COMBO PERDU
+        combo.status = 'lost';
+        combo.isValid = false;
+        await combo.save();
+
+        const user = await getUser(combo.userId);
+        user.stats.totalBets++;
+        user.stats.lostBets++;
+        user.history.push({
+          betId: `COMBO_${combo._id}`,
+          question: `Combiné ${combo.selections.length} paris`,
+          option: `${combo.selections.length} sélections`,
+          amount: combo.amount,
+          winnings: 0,
+          result: 'lost',
+          timestamp: new Date()
+        });
+        await user.save();
+
+        console.log(`❌ Combiné ${combo._id} perdu pour user ${combo.userId}`);
+
+        // Notifier l'utilisateur
+        try {
+          const userObj = await client.users.fetch(combo.userId);
+          const lostEmbed = new EmbedBuilder()
+            .setColor('#FF0000')
+            .setTitle('❌ Combiné Perdu')
+            .setDescription(`Votre combiné a été invalidé suite à la résolution d'un pari.`)
+            .addFields(
+              { name: '📊 Pari résolu', value: selection.betQuestion, inline: false },
+              { name: '❌ Votre choix', value: selection.optionName, inline: true },
+              { name: '💸 Mise perdue', value: `${combo.amount}€`, inline: true }
+            )
+            .setTimestamp();
+
+          await userObj.send({ embeds: [lostEmbed] });
+        } catch (error) {
+          console.error('Impossible d\'envoyer DM:', error);
+        }
+
+        continue;
+      }
+
+      // ✅ Ce pari du combo est gagnant, incrémenter le compteur
+      combo.resolvedBets++;
+
+      // Vérifier si TOUS les paris du combo sont résolus
+      let allResolved = true;
+      for (const sel of combo.selections) {
+        const betCheck = await Bet.findOne({ messageId: sel.betId });
+        if (!betCheck || betCheck.status !== 'resolved') {
+          allResolved = false;
+          break;
+        }
+      }
+
+      if (allResolved) {
+        // 🏆 COMBO GAGNÉ
+        combo.status = 'won';
+        await combo.save();
+
+        const user = await getUser(combo.userId);
+        user.balance += combo.potentialWin;
+        user.stats.totalBets++;
+        user.stats.wonBets++;
+        user.history.push({
+          betId: `COMBO_${combo._id}`,
+          question: `Combiné ${combo.selections.length} paris`,
+          option: `${combo.selections.length} sélections`,
+          amount: combo.amount,
+          winnings: combo.potentialWin,
+          result: 'won',
+          timestamp: new Date()
+        });
+        await user.save();
+
+        console.log(`🏆 Combiné ${combo._id} gagné pour user ${combo.userId} - ${combo.potentialWin}€`);
+
+        // Notifier l'utilisateur
+        try {
+          const userObj = await client.users.fetch(combo.userId);
+          const wonEmbed = new EmbedBuilder()
+            .setColor('#00FF00')
+            .setTitle('🏆 COMBINÉ GAGNÉ !')
+            .setDescription(`Félicitations ! Votre combiné de ${combo.selections.length} paris est gagnant !`)
+            .addFields(
+              { name: '💰 Mise', value: `${combo.amount}€`, inline: true },
+              { name: '📊 Cote', value: `${combo.totalOdds.toFixed(2)}x`, inline: true },
+              { name: '🎉 Gain', value: `**${combo.potentialWin}€**`, inline: true },
+              { name: '📈 Profit', value: `+${combo.potentialWin - combo.amount}€`, inline: true },
+              { name: '💵 Nouveau solde', value: `${user.balance}€`, inline: true }
+            )
+            .setTimestamp();
+
+          await userObj.send({ embeds: [wonEmbed] });
+        } catch (error) {
+          console.error('Impossible d\'envoyer DM:', error);
+        }
+      } else {
+        // En attente d'autres résultats
+        combo.status = 'partially_resolved';
+        await combo.save();
+      }
+    }
+  } catch (error) {
+    console.error('Erreur résolution combinés:', error);
   }
 }
 
@@ -255,8 +401,7 @@ client.on('interactionCreate', async (interaction) => {
           await user.save();
   }
 }
-
-
+      
       bet.status = 'cancelled';
       await bet.save();
 
@@ -338,7 +483,50 @@ client.on('interactionCreate', async (interaction) => {
 
       await interaction.update({ embeds: [embed], components: [row] });
     }
+
+    if (action === 'combo') {
+  const subaction = params[0];
+  const comboId = params[1];
+
+  // Récupérer les données temporaires
+  const tempCombo = client.tempCombos?.[comboId];
+
+  if (!tempCombo) {
+    return interaction.reply({ content: '❌ Cette session a expiré. Veuillez recréer votre combiné.', ephemeral: true });
   }
+
+  if (tempCombo.userId !== interaction.user.id) {
+    return interaction.reply({ content: '❌ Ce n\'est pas votre combiné.', ephemeral: true });
+  }
+
+  // Bouton ANNULER
+  if (subaction === 'cancel') {
+    delete client.tempCombos[comboId];
+    await interaction.message.delete();
+    return interaction.reply({ content: '❌ Combiné annulé.', ephemeral: true });
+  }
+
+  // Bouton CONFIRMER
+  if (subaction === 'confirm') {
+    const modal = new ModalBuilder()
+      .setCustomId(`combo_amount_${comboId}`)
+      .setTitle('💰 Montant à Miser');
+
+    const amountInput = new TextInputBuilder()
+      .setCustomId('amount')
+      .setLabel('💵 Combien voulez-vous miser ? (en €)')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder(`Exemple: 50 (Cote totale: ${tempCombo.totalOdds.toFixed(2)}x)`)
+      .setRequired(true)
+      .setMinLength(1)
+      .setMaxLength(6);
+
+    const row = new ActionRowBuilder().addComponents(amountInput);
+    modal.addComponents(row);
+
+    return interaction.showModal(modal);
+  }
+}
 
   if (interaction.isModalSubmit()) {
     const [action, subaction, betId, optionIndex] = interaction.customId.split('_');
@@ -458,7 +646,83 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.reply({ embeds: [successEmbed], ephemeral: true });
     }
   }
-});
+
+    if (action === 'combo' && subaction === 'amount') {
+  const comboId = betId; // Réutilise le parsing existant
+  const amount = parseInt(interaction.fields.getTextInputValue('amount'));
+
+  const tempCombo = client.tempCombos?.[comboId];
+
+  if (!tempCombo) {
+    return interaction.reply({ content: '❌ Session expirée. Veuillez recréer votre combiné.', ephemeral: true });
+  }
+
+  if (tempCombo.userId !== interaction.user.id) {
+    return interaction.reply({ content: '❌ Ce n\'est pas votre combiné.', ephemeral: true });
+  }
+
+  if (isNaN(amount) || amount <= 0) {
+    return interaction.reply({ content: '❌ Veuillez entrer un montant valide (nombre entier positif).', ephemeral: true });
+  }
+
+  const user = await getUser(interaction.user.id);
+  if (user.balance < amount) {
+    return interaction.reply({ content: `❌ Solde insuffisant. Vous avez **${user.balance}€**.`, ephemeral: true });
+  }
+
+  // Vérifier que tous les paris sont toujours ouverts
+  for (const detail of tempCombo.betDetails) {
+    const bet = await Bet.findOne({ messageId: detail.betId });
+    if (!bet || bet.status !== 'open') {
+      delete client.tempCombos[comboId];
+      return interaction.reply({ 
+        content: `❌ Le pari "${detail.betQuestion}" a été clôturé entre-temps. Veuillez recréer votre combiné.`, 
+        ephemeral: true 
+      });
+    }
+  }
+
+  const potentialWin = Math.floor(amount * tempCombo.totalOdds);
+  const profit = potentialWin - amount;
+
+  // Déduire du solde
+  user.balance -= amount;
+  await user.save();
+
+  // Créer le combiné en base de données
+  const newCombo = new Combo({
+    userId: interaction.user.id,
+    selections: tempCombo.betDetails,
+    totalOdds: tempCombo.totalOdds,
+    amount: amount,
+    potentialWin: potentialWin,
+    status: 'pending',
+    resolvedBets: 0,
+    isValid: true
+  });
+  await newCombo.save();
+
+  // Nettoyer les données temporaires
+  delete client.tempCombos[comboId];
+
+  const successEmbed = new EmbedBuilder()
+    .setColor('#00FF00')
+    .setTitle('✅ Combiné Validé !')
+    .setDescription(`Votre combiné de **${tempCombo.betDetails.length} paris** a été enregistré.`)
+    .addFields(
+      { name: '💰 Mise', value: `${amount}€`, inline: true },
+      { name: '📊 Cote Totale', value: `${tempCombo.totalOdds.toFixed(2)}x`, inline: true },
+      { name: '🎯 Gain potentiel', value: `${potentialWin}€`, inline: true },
+      { name: '📈 Profit potentiel', value: `+${profit}€`, inline: true },
+      { name: '💵 Nouveau solde', value: `${user.balance}€`, inline: true },
+      { name: '🆔 ID du combiné', value: `\`${newCombo._id}\``, inline: true }
+    )
+    .setFooter({ text: 'Utilisez !combo list pour voir vos combinés actifs' })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+  }
+};
 
 // ==================== COMMANDES ====================
 
@@ -1404,6 +1668,215 @@ if (command === '!annuler-tout' || command === '!cancelall') {
 
     message.reply({ embeds: [resultEmbed] });
   }
+
+  if (command === '!combo' || command === '!combiné') {
+  const subCommand = args[1]?.toLowerCase();
+
+  // !combo create - Créer un combiné
+  if (subCommand === 'create' || subCommand === 'creer') {
+    const selections = args.slice(2).join(' ');
+    
+    if (!selections) {
+      return message.reply(
+        '❌ Format incorrect.\n\n' +
+        '**Usage:** `!combo create [messageId1]:[option] [messageId2]:[option] ...`\n' +
+        '**Exemple:** `!combo create 123456:1 789012:2 345678:1`\n\n' +
+        '➡️ Sélectionnez au moins 2 paris différents pour créer un combiné.'
+      );
+    }
+
+    // Parser les sélections
+    const selectedBets = selections.split(/\s+/).map(sel => {
+      const [betId, optionStr] = sel.split(':');
+      return { betId: betId.trim(), option: parseInt(optionStr) - 1 };
+    });
+
+    if (selectedBets.length < 2) {
+      return message.reply('❌ Un combiné doit contenir au moins **2 paris différents**.');
+    }
+
+    // Vérifier que tous les paris existent et sont ouverts
+    const betDetails = [];
+    let totalOdds = 1;
+
+    for (const sel of selectedBets) {
+      if (isNaN(sel.option) || sel.option < 0) {
+        return message.reply(`❌ Option invalide pour le pari \`${sel.betId}\`. Utilisez des numéros à partir de 1.`);
+      }
+
+      const bet = await Bet.findOne({ messageId: sel.betId });
+
+      if (!bet) {
+        return message.reply(`❌ Le pari \`${sel.betId}\` n'existe pas.`);
+      }
+
+      if (bet.status !== 'open') {
+        return message.reply(`❌ Le pari "${bet.question}" est clôturé. Vous ne pouvez plus l'inclure dans un combiné.`);
+      }
+
+      if (sel.option >= bet.options.length) {
+        return message.reply(`❌ L'option ${sel.option + 1} n'existe pas pour le pari "${bet.question}".`);
+      }
+
+      const odds = bet.initialOdds[sel.option];
+      totalOdds *= odds;
+
+      betDetails.push({
+        betId: sel.betId,
+        betQuestion: bet.question,
+        option: sel.option,
+        optionName: bet.options[sel.option].name,
+        odds: odds
+      });
+    }
+
+    // Créer l'embed de prévisualisation
+    const previewEmbed = new EmbedBuilder()
+      .setColor('#FFD700')
+      .setTitle('🎯 Prévisualisation du Combiné')
+      .setDescription('Vérifiez votre sélection avant de valider :')
+      .addFields(
+        ...betDetails.map((detail, i) => ({
+          name: `${i + 1}. ${detail.betQuestion}`,
+          value: `➡️ **${detail.optionName}** (cote ${detail.odds}x)`,
+          inline: false
+        })),
+        { name: '\u200b', value: '\u200b', inline: false },
+        { name: '📊 Cote Totale', value: `**${totalOdds.toFixed(2)}x**`, inline: true },
+        { name: '💰 Exemple (50€)', value: `**${Math.floor(50 * totalOdds)}€**`, inline: true },
+        { name: '📈 Profit (50€)', value: `**+${Math.floor(50 * totalOdds - 50)}€**`, inline: true }
+      )
+      .setFooter({ text: 'Cliquez sur "Confirmer" pour entrer votre mise' })
+      .setTimestamp();
+
+    // Créer les boutons de confirmation
+    const comboId = `${message.author.id}_${Date.now()}`;
+    const confirmRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`combo_confirm_${comboId}`)
+          .setLabel('✅ Confirmer et Miser')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('💰'),
+        new ButtonBuilder()
+          .setCustomId(`combo_cancel_${comboId}`)
+          .setLabel('❌ Annuler')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    // Stocker temporairement les détails du combiné
+    client.tempCombos = client.tempCombos || {};
+    client.tempCombos[comboId] = {
+      userId: message.author.id,
+      betDetails,
+      totalOdds,
+      timestamp: Date.now()
+    };
+
+    await message.reply({ embeds: [previewEmbed], components: [confirmRow] });
+  }
+
+  // !combo list - Lister ses combinés actifs
+  else if (subCommand === 'list' || subCommand === 'liste') {
+    const userCombos = await Combo.find({ 
+      userId: message.author.id,
+      status: { $in: ['pending', 'partially_resolved'] }
+    });
+
+    if (userCombos.length === 0) {
+      return message.reply('📭 Vous n\'avez aucun combiné en cours.');
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor('#FFD700')
+      .setTitle('🎯 Vos Combinés en Cours')
+      .setDescription(`Vous avez **${userCombos.length}** combiné(s) actif(s) :\n`)
+      .setTimestamp();
+
+    for (const combo of userCombos) {
+      const selectionsText = combo.selections.map((sel, i) => 
+        `${i + 1}. **${sel.betQuestion}** → ${sel.optionName} (${sel.odds}x)`
+      ).join('\n');
+
+      embed.addFields({
+        name: `💰 Mise: ${combo.amount}€ | Cote: ${combo.totalOdds.toFixed(2)}x | Gain potentiel: ${combo.potentialWin}€`,
+        value: `${selectionsText}\n\n🆔 ID: \`${combo._id}\`\n⏰ Créé <t:${Math.floor(combo.createdAt.getTime() / 1000)}:R>\n\n_Pour annuler: \`!combo cancel ${combo._id}\`_`,
+        inline: false
+      });
+    }
+
+    message.reply({ embeds: [embed] });
+  }
+
+  // !combo cancel - Annuler son propre combiné
+  else if (subCommand === 'cancel' || subCommand === 'annuler') {
+    const comboId = args[2];
+
+    if (!comboId) {
+      return message.reply('❌ Vous devez fournir l\'ID du combiné.\nFormat: `!combo cancel [ID]`\nExemple: `!combo cancel 507f1f77bcf86cd799439011`');
+    }
+
+    const combo = await Combo.findById(comboId);
+
+    if (!combo) {
+      return message.reply('❌ Combiné introuvable. Vérifiez l\'ID.');
+    }
+
+    if (combo.userId !== message.author.id) {
+      return message.reply('❌ Vous ne pouvez annuler que vos propres combinés.');
+    }
+
+    if (combo.status !== 'pending' && combo.status !== 'partially_resolved') {
+      return message.reply('❌ Ce combiné a déjà été résolu (gagné ou perdu).');
+    }
+
+    // Vérifier si tous les paris sont encore en attente
+    let hasResolvedBet = false;
+    for (const sel of combo.selections) {
+      const bet = await Bet.findOne({ messageId: sel.betId });
+      if (bet && bet.status === 'resolved') {
+        hasResolvedBet = true;
+        break;
+      }
+    }
+
+    if (hasResolvedBet) {
+      return message.reply('❌ Impossible d\'annuler : au moins un des paris de ce combiné a déjà été validé.');
+    }
+
+    // Rembourser l'utilisateur
+    const user = await getUser(message.author.id);
+    user.balance += combo.amount;
+    await user.save();
+
+    // Supprimer le combiné
+    await Combo.findByIdAndDelete(comboId);
+
+    const embed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ Combiné Annulé')
+      .setDescription(`Votre combiné a été annulé et vous avez été remboursé de **${combo.amount}€**.`)
+      .addFields(
+        { name: '💰 Nouveau solde', value: `${user.balance}€` }
+      )
+      .setTimestamp();
+
+    message.reply({ embeds: [embed] });
+  }
+
+  // Commande invalide
+  else {
+    return message.reply(
+      '❌ Commande invalide.\n\n' +
+      '**Commandes disponibles:**\n' +
+      '• `!combo create [pari1:option] [pari2:option] ...` - Créer un combiné\n' +
+      '• `!combo list` - Voir vos combinés actifs\n' +
+      '• `!combo cancel [ID]` - Annuler un combiné\n\n' +
+      '**Exemple:**\n' +
+      '`!combo create 123456:1 789012:2` (2 paris minimum)'
+    );
+  }
+}
   
   if (command === '!aide' || command === '!help') {
     const helpEmbed = new EmbedBuilder()
@@ -1546,6 +2019,7 @@ if (action === 'validate') {
       bet.status = 'resolved';
       bet.winningOptions = winningOptions;
       await bet.save();
+      await checkAndResolveCombos(bet.messageId, winningOptions);
       
       const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
         .setColor('#FF0000')
@@ -1643,4 +2117,4 @@ setInterval(() => {
   } catch (err) {
     console.log('⚠️ Erreur ping');
   }
-}, 5 * 60 * 1000);
+}, 5 * 60 * 1000)});
