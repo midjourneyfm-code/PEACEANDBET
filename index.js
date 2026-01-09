@@ -135,16 +135,16 @@ function calculatePotentialWin(amount, odds) {
 
 function getSafeOrRiskMultipliers() {
   return [
-    { round: 1, multiplier: 1.3, winChance: 85 },
-    { round: 2, multiplier: 1.6, winChance: 80 },
-    { round: 3, multiplier: 2.1, winChance: 75 },
-    { round: 4, multiplier: 3.0, winChance: 70 },
-    { round: 5, multiplier: 4.2, winChance: 65 },
-    { round: 6, multiplier: 5.8, winChance: 55 },
-    { round: 7, multiplier: 8.0, winChance: 45 },
-    { round: 8, multiplier: 12.0, winChance: 35 },
-    { round: 9, multiplier: 18.0, winChance: 25 },
-    { round: 10, multiplier: 30.0, winChance: 15 }
+    { round: 1, multiplier: 1.3, winChance: 60 },
+    { round: 2, multiplier: 1.6, winChance: 50 },
+    { round: 3, multiplier: 2.1, winChance: 40 },
+    { round: 4, multiplier: 3.0, winChance: 35 },
+    { round: 5, multiplier: 4.2, winChance: 30 },
+    { round: 6, multiplier: 5.8, winChance: 20 },
+    { round: 7, multiplier: 8.0, winChance: 12 },
+    { round: 8, multiplier: 12.0, winChance: 9 },
+    { round: 9, multiplier: 18.0, winChance: 7 },
+    { round: 10, multiplier: 30.0, winChance: 5 }
   ];
 }
 
@@ -1410,7 +1410,7 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [embed] });
   }
 
-  if (command === '!safe-or-risk' || command === '!sor' || command === '!risk') {
+if (command === '!safe-or-risk' || command === '!sor' || command === '!risk') {
   const amount = parseInt(args[1]);
 
   if (!amount || isNaN(amount) || amount <= 0) {
@@ -1455,14 +1455,19 @@ client.on('messageCreate', async (message) => {
   const roundData = multipliers[0]; // Tour 1
   const embed = createSafeOrRiskEmbed(game, roundData);
 
- // Au tour 1, on ne peut QUE risquer (pas d'encaissement possible)
+  // Au tour 1, on ne peut QUE risquer ou ANNULER (pas d'encaissement possible)
   const row = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder()
         .setCustomId(`sor_continue_${message.author.id}`)
         .setLabel(`🎲 RISQUER (${roundData.winChance}% chance)`)
         .setStyle(ButtonStyle.Danger)
-        .setEmoji('🎲')
+        .setEmoji('🎲'),
+      new ButtonBuilder()
+        .setCustomId(`sor_cancel_${message.author.id}`)
+        .setLabel('❌ ANNULER')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🚫')
     );
 
   const gameMessage = await message.reply({ embeds: [embed], components: [row] });
