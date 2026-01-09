@@ -233,14 +233,16 @@ async function checkCombisForBet(messageId, winningOptions) {
 
         // ⭐ NOTIFICATION PARI PERDU (sera affichée dans les résultats)
         combiNotifications.push({
-          userId: combi.userId,
-          username: combi.username,
-          type: 'lost',
-          question: betInCombi.question,
-          optionName: betInCombi.optionName,
-          stake: combi.totalStake,
-          odds: combi.totalOdds
-        });
+        userId: combi.userId,
+        username: combi.username,
+        type: 'lost',
+        question: betInCombi.question,
+        optionName: betInCombi.optionName,
+        stake: combi.totalStake,
+        odds: combi.totalOdds,
+        combiId: combi.combiId,           // ⭐ AJOUTE
+        totalBets: combi.bets.length      // ⭐ AJOUTE
+  });
 
         continue;
       }
@@ -1821,26 +1823,43 @@ if (command === '!mes-combis' || command === '!mc') {
       fieldValue += `**📋 Paris du combiné :**\n`;
       
       // ⭐ Récupérer le statut réel de chaque pari
+      const processedBets = combi.processedBets || [];
       for (let i = 0; i < combi.bets.length; i++) {
         const b = combi.bets[i];
         
         let betStatusEmoji;
-        if (combi.status === 'lost') {
-          // Si le combiné est perdu, afficher ❌ pour tous les paris
-          betStatusEmoji = '❌';
-        } else if (combi.status === 'won') {
-          // Si le combiné est gagné, tous les paris sont ✅
-          betStatusEmoji = '✅';
-        } else {
-          // Combiné en cours : vérifier si ce pari spécifique a été résolu
-          const processedBets = combi.processedBets || [];
-          betStatusEmoji = processedBets.includes(b.messageId) ? '✅' : '⏳';
-        }
-        
-        fieldValue += `${i + 1}. ${betStatusEmoji} **${b.question}**\n`;
-        fieldValue += `   ➜ Sélection : ${b.optionName} (${b.odds}x)\n`;
-        fieldValue += `   ➜ Mise : ${b.amount}€ | ID: \`${b.messageId}\`\n`;
+       if (combi.status === 'won') {
+    // ✅ Combiné gagné = tous les paris sont gagnants
+    betStatusEmoji = '✅';
+  } else if (combi.status === 'lost') {
+    // ❌ Combiné perdu = vérifier si CE pari spécifique a fait perdre le combiné
+    if (processedBets.includes(b.messageId)) {
+      // Ce pari a été traité, vérifier s'il était gagnant
+      const betData = await Bet.findOne({ messageId: b.messageId });
+      if (betData && betData.status === 'resolved' && betData.winningOptions) {
+        // Si ce pari est résolu, vérifier si l'option du combiné était gagnante
+        const wasWinning = betData.winningOptions.includes(b.optionIndex);
+        betStatusEmoji = wasWinning ? '✅' : '❌';
+      } else {
+        // Pari pas encore résolu
+        betStatusEmoji = '⏳';
       }
+    } else {
+      // Pari pas encore traité
+      betStatusEmoji = '⏳';
+    }
+  } else if (combi.status === 'confirmed') {
+    // ⏳ Combiné en cours = vérifier si ce pari a été validé
+    betStatusEmoji = processedBets.includes(b.messageId) ? '✅' : '⏳';
+  } else {
+    // Cancelled
+    betStatusEmoji = '🚫';
+  }
+  
+  fieldValue += `${i + 1}. ${betStatusEmoji} **${b.question}**\n`;
+  fieldValue += `   ➜ Sélection : ${b.optionName} (${b.odds}x)\n`;
+  fieldValue += `   ➜ Mise : ${b.amount}€ | ID: \`${b.messageId}\`\n`;
+}
       
       fieldValue += `\n**🆔 ID :** \`${combi.combiId}\``;
 
@@ -2112,8 +2131,9 @@ if (action === 'validate') {
       
       for (const notif of combiNotifications) {
         if (notif.type === 'lost') {
-          distributionText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.stake}€)`;
-          distributionText += `\n   └─ Pari perdu : **${notif.question}** → ${notif.optionName}`;
+          distributionText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.totalBets} matchs, ${notif.stake}€ perdus)`;
+          distributionText += `\n   └─ Pari perdant : **${notif.question}** → ${notif.optionName}`;
+          distributionText += `\n   └─ ID : \`${notif.combiId}\``;
         } else if (notif.type === 'progress') {
           distributionText += `\n✅ <@${notif.userId}> : Combiné en cours (${notif.resolved}/${notif.total})`;
           distributionText += `\n   └─ **${notif.question}** → ${notif.optionName} ✅`;
