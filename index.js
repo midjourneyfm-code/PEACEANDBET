@@ -100,6 +100,7 @@ const client = new Client({
 
 const BETTING_CREATOR_ROLE = 'Créateur de Paris';
 const tempCombis = new Map(); // userId -> { bets: [], totalOdds: 1 }
+const activeSafeOrRiskGames = new Map(); // userId -> { stake, currentMultiplier, round, messageId }
 
 // ==================== FONCTIONS UTILITAIRES ====================
 
@@ -130,6 +131,55 @@ async function calculateWinrate(userId) {
 
 function calculatePotentialWin(amount, odds) {
   return Math.floor(amount * odds);
+}
+
+function getSafeOrRiskMultipliers() {
+  return [
+    { round: 1, multiplier: 1.3, winChance: 85 },
+    { round: 2, multiplier: 1.6, winChance: 80 },
+    { round: 3, multiplier: 2.1, winChance: 75 },
+    { round: 4, multiplier: 3.0, winChance: 70 },
+    { round: 5, multiplier: 4.2, winChance: 65 },
+    { round: 6, multiplier: 5.8, winChance: 55 },
+    { round: 7, multiplier: 8.0, winChance: 45 },
+    { round: 8, multiplier: 12.0, winChance: 35 },
+    { round: 9, multiplier: 18.0, winChance: 25 },
+    { round: 10, multiplier: 30.0, winChance: 15 }
+  ];
+}
+
+function createSafeOrRiskEmbed(game, roundData) {
+  const potentialWin = Math.floor(game.stake * roundData.multiplier);
+  const profit = potentialWin - game.stake;
+  
+  let progressBar = '';
+  for (let i = 1; i <= 10; i++) {
+    if (i < game.round) {
+      progressBar += '✅';
+    } else if (i === game.round) {
+      progressBar += '🎯';
+    } else {
+      progressBar += '⬜';
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor('#FF6B00')
+    .setTitle('🎲 SAFE OR RISK 🎲')
+    .setDescription(
+      `**Tour ${game.round}/10**\n\n` +
+      `${progressBar}\n\n` +
+      `💰 **Mise de départ :** ${game.stake}€\n` +
+      `📊 **Multiplicateur actuel :** **x${roundData.multiplier}**\n` +
+      `💎 **Gain potentiel :** **${potentialWin}€**\n` +
+      `💸 **Profit :** **+${profit}€**\n\n` +
+      `🎯 **Chance de réussite :** ${roundData.winChance}%\n` +
+      `💥 **Risque d'échec :** ${100 - roundData.winChance}%`
+    )
+    .setFooter({ text: '⚠️ Plus tu montes, plus le risque augmente !' })
+    .setTimestamp();
+
+  return embed;
 }
 
 async function closeBetAutomatically(messageId) {
@@ -437,6 +487,186 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
+
+    if (action === 'sor') {
+  const subaction = params[0]; // 'continue' ou 'cashout'
+  const userId = params[1];
+
+  // Vérifier que c'est bien le joueur
+  if (interaction.user.id !== userId) {
+    return interaction.reply({ content: '❌ Ce jeu n\'est pas le vôtre !', ephemeral: true });
+  }
+
+  const game = activeSafeOrRiskGames.get(userId);
+
+  if (!game) {
+    return interaction.reply({ content: '❌ Partie introuvable ou expirée.', ephemeral: true });
+  }
+
+  const multipliers = getSafeOrRiskMultipliers();
+
+  // ✅ ENCAISSER
+  if (subaction === 'cashout') {
+    const roundData = multipliers[game.round - 1];
+    const winnings = Math.floor(game.stake * roundData.multiplier);
+    const profit = winnings - game.stake;
+
+    // Créditer le joueur
+    const user = await getUser(userId);
+    user.balance += winnings;
+    user.stats.totalBets++;
+    user.stats.wonBets++;
+    user.history.push({
+      betId: `sor_${Date.now()}`,
+      question: `Safe or Risk (Tour ${game.round})`,
+      option: `Encaissé x${roundData.multiplier}`,
+      amount: game.stake,
+      winnings: winnings,
+      result: 'won',
+      timestamp: new Date()
+    });
+    await user.save();
+
+    // Supprimer la partie
+    activeSafeOrRiskGames.delete(userId);
+
+    const winEmbed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ ENCAISSÉ AVEC SUCCÈS !')
+      .setDescription(
+        `🎉 **Félicitations !** Vous avez sécurisé vos gains au **tour ${game.round}** !\n\n` +
+        `💰 **Mise de départ :** ${game.stake}€\n` +
+        `📊 **Multiplicateur :** x${roundData.multiplier}\n` +
+        `💎 **Gain total :** **${winnings}€**\n` +
+        `💸 **Profit :** **+${profit}€**\n\n` +
+        `💳 **Nouveau solde :** ${user.balance}€`
+      )
+      .setFooter({ text: '🎲 Rejouez avec !safe-or-risk [montant]' })
+      .setTimestamp();
+
+    await interaction.update({ embeds: [winEmbed], components: [] });
+    
+    console.log(`✅ ${interaction.user.tag} encaisse ${winnings}€ au tour ${game.round}`);
+    return;
+  }
+
+  // 🎲 CONTINUER (RISQUER)
+  if (subaction === 'continue') {
+    const currentRoundData = multipliers[game.round - 1];
+    
+    // Tirer au sort (basé sur winChance)
+    const random = Math.random() * 100;
+    const success = random < currentRoundData.winChance;
+
+    await interaction.deferUpdate();
+
+    if (!success) {
+      // 💥 BOOM - TOUT PERDU
+      const user = await getUser(userId);
+      user.stats.totalBets++;
+      user.stats.lostBets++;
+      user.history.push({
+        betId: `sor_${Date.now()}`,
+        question: `Safe or Risk (Tour ${game.round})`,
+        option: `Boom x${currentRoundData.multiplier}`,
+        amount: game.stake,
+        winnings: 0,
+        result: 'lost',
+        timestamp: new Date()
+      });
+      await user.save();
+
+      activeSafeOrRiskGames.delete(userId);
+
+      const loseEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('💥 BOOOOM ! 💥')
+        .setDescription(
+          `😱 **Vous avez tout perdu au tour ${game.round} !**\n\n` +
+          `💸 **Mise perdue :** ${game.stake}€\n` +
+          `📊 **Vous étiez à :** x${currentRoundData.multiplier}\n` +
+          `💔 **Vous auriez pu gagner :** ${Math.floor(game.stake * currentRoundData.multiplier)}€\n\n` +
+          `🎲 **Chance d'échec :** ${100 - currentRoundData.winChance}%\n` +
+          `💳 **Solde actuel :** ${user.balance}€`
+        )
+        .setFooter({ text: '🔄 Retentez votre chance avec !safe-or-risk [montant]' })
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [loseEmbed], components: [] });
+      
+      console.log(`💥 ${interaction.user.tag} explose au tour ${game.round} (perte: ${game.stake}€)`);
+      return;
+    }
+
+    // ✅ SUCCÈS - PASSAGE AU TOUR SUIVANT
+    game.round++;
+
+    if (game.round > 10) {
+      // 🏆 VICTOIRE TOTALE (tous les tours passés)
+      const finalWinnings = Math.floor(game.stake * 30); // x30 au tour 10
+      const profit = finalWinnings - game.stake;
+
+      const user = await getUser(userId);
+      user.balance += finalWinnings;
+      user.stats.totalBets++;
+      user.stats.wonBets++;
+      user.history.push({
+        betId: `sor_${Date.now()}`,
+        question: `Safe or Risk (JACKPOT)`,
+        option: `Complété x30`,
+        amount: game.stake,
+        winnings: finalWinnings,
+        result: 'won',
+        timestamp: new Date()
+      });
+      await user.save();
+
+      activeSafeOrRiskGames.delete(userId);
+
+      const jackpotEmbed = new EmbedBuilder()
+        .setColor('#FFD700')
+        .setTitle('🏆🎰 JACKPOT ULTIME ! 🎰🏆')
+        .setDescription(
+          `🎉🎉🎉 **INCROYABLE !** 🎉🎉🎉\n\n` +
+          `Vous avez complété **LES 10 TOURS** sans exploser !\n\n` +
+          `💰 **Mise :** ${game.stake}€\n` +
+          `⭐ **Multiplicateur final :** **x30**\n` +
+          `💎 **GAIN TOTAL :** **${finalWinnings}€**\n` +
+          `💸 **Profit :** **+${profit}€**\n\n` +
+          `💳 **Nouveau solde :** ${user.balance}€`
+        )
+        .setFooter({ text: `🎊 Bravo ${interaction.user.tag} ! Performance exceptionnelle ! 🎊` })
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [jackpotEmbed], components: [] });
+      
+      console.log(`🏆 ${interaction.user.tag} remporte le JACKPOT : ${finalWinnings}€`);
+      return;
+    }
+
+    // Mettre à jour l'affichage pour le tour suivant
+    const nextRoundData = multipliers[game.round - 1];
+    const nextEmbed = createSafeOrRiskEmbed(game, nextRoundData);
+
+    const nextRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`sor_continue_${userId}`)
+          .setLabel(`🎲 RISQUER (${nextRoundData.winChance}% chance)`)
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('🎲'),
+        new ButtonBuilder()
+          .setCustomId(`sor_cashout_${userId}`)
+          .setLabel(`✅ ENCAISSER ${Math.floor(game.stake * nextRoundData.multiplier)}€`)
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('💰')
+      );
+
+    await interaction.editReply({ embeds: [nextEmbed], components: [nextRow] });
+    
+    console.log(`✅ ${interaction.user.tag} passe au tour ${game.round} (x${nextRoundData.multiplier})`);
+  }
+}
     
     if (action === 'bet') {
       const optionIndex = parseInt(params[0]);
@@ -1126,6 +1356,73 @@ client.on('messageCreate', async (message) => {
 
     message.reply({ embeds: [embed] });
   }
+
+  if (command === '!safe-or-risk' || command === '!sor' || command === '!risk') {
+  const amount = parseInt(args[1]);
+
+  if (!amount || isNaN(amount) || amount <= 0) {
+    return message.reply(
+      '❌ **Format incorrect !**\n\n' +
+      '📋 **Usage :** `!safe-or-risk <montant>`\n' +
+      '📌 **Exemple :** `!safe-or-risk 50`\n\n' +
+      '🎲 **Règles du jeu :**\n' +
+      '• Chaque tour multiplie tes gains\n' +
+      '• Tu peux encaisser à tout moment\n' +
+      '• Ou risquer de continuer...\n' +
+      '• Mais attention : plus tu montes, plus tu risques de **TOUT PERDRE** !\n\n' +
+      '🔢 **Alias :** `!sor`, `!risk`'
+    );
+  }
+
+  // Vérifier si le joueur a déjà une partie en cours
+  if (activeSafeOrRiskGames.has(message.author.id)) {
+    return message.reply('❌ Vous avez déjà une partie en cours ! Terminez-la avant d\'en commencer une nouvelle.');
+  }
+
+  // Vérifier le solde
+  const user = await getUser(message.author.id);
+  if (user.balance < amount) {
+    return message.reply(`❌ Solde insuffisant. Vous avez **${user.balance}€**.`);
+  }
+
+  // Déduire la mise
+  user.balance -= amount;
+  await user.save();
+
+  // Créer la partie
+  const multipliers = getSafeOrRiskMultipliers();
+  const game = {
+    stake: amount,
+    currentMultiplier: 1,
+    round: 1,
+    userId: message.author.id,
+    username: message.author.tag
+  };
+
+  const roundData = multipliers[0]; // Tour 1
+  const embed = createSafeOrRiskEmbed(game, roundData);
+
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`sor_continue_${message.author.id}`)
+        .setLabel(`🎲 RISQUER (${roundData.winChance}% chance)`)
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('🎲'),
+      new ButtonBuilder()
+        .setCustomId(`sor_cashout_${message.author.id}`)
+        .setLabel(`✅ ENCAISSER ${Math.floor(amount * roundData.multiplier)}€`)
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('💰')
+    );
+
+  const gameMessage = await message.reply({ embeds: [embed], components: [row] });
+  
+  game.messageId = gameMessage.id;
+  activeSafeOrRiskGames.set(message.author.id, game);
+
+  console.log(`🎲 ${message.author.tag} lance Safe or Risk avec ${amount}€`);
+}
 
   if (command === '!don' || command === '!give') {
     const targetUser = message.mentions.users.first();
