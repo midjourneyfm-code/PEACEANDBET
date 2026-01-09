@@ -481,7 +481,9 @@ client.on('interactionCreate', async (interaction) => {
     if (action === 'leaderboard') {
       const sortBy = params[0];
       
-      const users = await User.find({});
+      const users = await User.find({
+        userId: { $regex: /^[0-9]{17,19}$/ } // ⭐ Garde seulement les vrais IDs Discord
+      });
       const userList = users.map(u => ({
         userId: u.userId,
         balance: u.balance,
@@ -811,6 +813,143 @@ client.on('messageCreate', async (message) => {
   message.reply({ embeds: [embed] });
 }
 
+  if (command === '!pari' || command === '!p') {
+    const betMessageId = args[1];
+    const optionNum = parseInt(args[2]);
+    const amount = parseInt(args[3]);
+
+    // Vérifications des arguments
+    if (!betMessageId || isNaN(optionNum) || isNaN(amount)) {
+      return message.reply(
+        '❌ Format incorrect.\n' +
+        '**Usage :** `!pari [id] [option] [montant]`\n' +
+        '**Exemple :** `!pari 123456789 1 50`\n\n' +
+        '💡 Utilisez `!paris` pour voir les IDs et options disponibles.'
+      );
+    }
+
+    if (amount <= 0) {
+      return message.reply('❌ Le montant doit être supérieur à 0.');
+    }
+
+    // Charger le pari
+    const bet = await Bet.findOne({ messageId: betMessageId });
+
+    if (!bet) {
+      return message.reply(
+        `❌ Pari introuvable : \`${betMessageId}\`\n` +
+        `Utilisez \`!paris\` pour voir les paris actifs.`
+      );
+    }
+
+    if (bet.status === 'locked') {
+      return message.reply('❌ Les paris sont clôturés. Le match est en cours !');
+    }
+
+    if (bet.status !== 'open') {
+      return message.reply(`❌ Ce pari est fermé.\nQuestion : "${bet.question}"`);
+    }
+
+    const optionIndex = optionNum - 1;
+    if (optionIndex < 0 || optionIndex >= bet.options.length) {
+      return message.reply(
+        `❌ Option invalide pour le pari "${bet.question}"\n` +
+        `Vous avez choisi l'option **${optionNum}**, mais ce pari a **${bet.options.length} option(s)**.\n` +
+        `Options disponibles :\n` +
+        bet.options.map((o, i) => `  ${i + 1}. ${o.name} (cote ${bet.initialOdds[i]}x)`).join('\n')
+      );
+    }
+
+    // Vérifier si déjà parié
+    if (bet.bettors && bet.bettors[message.author.id]) {
+      return message.reply(
+        `❌ Vous avez déjà parié sur ce match !\n` +
+        `Match : "${bet.question}"\n` +
+        `Votre pari : **${bet.bettors[message.author.id].amount}€** sur **${bet.options[bet.bettors[message.author.id].option].name}**`
+      );
+    }
+
+    // Vérifier le solde
+    const user = await getUser(message.author.id);
+    if (user.balance < amount) {
+      return message.reply(`❌ Solde insuffisant. Vous avez **${user.balance}€**.`);
+    }
+
+    const odds = bet.initialOdds[optionIndex];
+    const potentialWin = calculatePotentialWin(amount, odds);
+
+    // Déduire du solde
+    user.balance -= amount;
+    await user.save();
+
+    // Enregistrer le pari (opération atomique)
+    const updateResult = await Bet.findOneAndUpdate(
+      { 
+        messageId: betMessageId,
+        [`bettors.${message.author.id}`]: { $exists: false }
+      },
+      { 
+        $set: { 
+          [`bettors.${message.author.id}`]: {
+            option: optionIndex,
+            amount: amount,
+            username: message.author.tag,
+            odds: odds
+          }
+        },
+        $inc: { totalPool: amount }
+      },
+      { new: true }
+    );
+
+    if (!updateResult) {
+      // Rembourser si échec
+      user.balance += amount;
+      await user.save();
+      return message.reply('❌ Erreur : vous avez déjà parié ou le pari n\'existe plus.');
+    }
+
+    console.log(`✅ ${message.author.tag} a parié ${amount}€ via !pari`);
+
+    // Mettre à jour le message Discord
+    try {
+      const channel = await client.channels.fetch(bet.channelId);
+      const betMessage = await channel.messages.fetch(betMessageId);
+      
+      const bettorsCount = Object.keys(updateResult.bettors).length;
+      
+      const fields = betMessage.embeds[0].fields.filter(f => !['💰 Comment parier ?', '📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
+      fields.push(
+        { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton OU utilisez `!pari [id] [option] [montant]`' },
+        { name: '📈 Statut', value: updateResult.status === 'open' ? '🟢 En cours' : '🔒 Clôturé', inline: true },
+        { name: '💵 Total des mises', value: `${updateResult.totalPool}€`, inline: true },
+        { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
+      );
+      
+      const updatedEmbed = EmbedBuilder.from(betMessage.embeds[0]).setFields(fields);
+      await betMessage.edit({ embeds: [updatedEmbed] });
+      
+      await betMessage.reply(`💰 **<@${message.author.id}>** a parié **${amount}€** sur **${bet.options[optionIndex].name}** (cote ${odds}x) — Gain potentiel : **${potentialWin}€**`);
+    } catch (error) {
+      console.error('Erreur mise à jour message:', error);
+    }
+
+    // Confirmation privée
+    const successEmbed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ Pari Placé !')
+      .setDescription(`Vous avez misé **${amount}€** sur **${bet.options[optionIndex].name}**`)
+      .addFields(
+        { name: 'Match', value: bet.question },
+        { name: 'Cote', value: `${odds}x`, inline: true },
+        { name: 'Gain potentiel', value: `${potentialWin}€`, inline: true },
+        { name: 'Profit potentiel', value: `+${potentialWin - amount}€`, inline: true },
+        { name: 'Nouveau solde', value: `${user.balance}€` }
+      );
+
+    message.reply({ embeds: [successEmbed] });
+  }
+
   if (command === '!paris') {
     const activeBets = await Bet.find({ status: { $in: ['open', 'locked'] } });
 
@@ -1100,7 +1239,7 @@ if (command === '!annuler-tout' || command === '!cancelall') {
     let closingTime = null;
     let closingTimestamp = null;
     
-       if (closingTimeStr) {
+          if (closingTimeStr) {
       const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
       const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
       
@@ -1109,33 +1248,48 @@ if (command === '!annuler-tout' || command === '!cancelall') {
         const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
         
         if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-          // ⭐ CRÉER EN HEURE DE PARIS
+          // ⭐ INTL pour Paris
           const now = new Date();
           
-          // Obtenir l'heure actuelle à Paris
-          const parisNowStr = now.toLocaleString('en-US', { timeZone: 'Europe/Paris' });
-          const parisNow = new Date(parisNowStr);
+          const parisFormatter = new Intl.DateTimeFormat('fr-FR', {
+            timeZone: 'Europe/Paris',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false
+          });
           
-          // Créer la date de clôture à Paris
-          const closingDateStr = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-          closingDateStr.setHours(targetHour, targetMinute, 0, 0);
+          const parisNowParts = parisFormatter.formatToParts(now);
+          const parisNowObj = {};
+          parisNowParts.forEach(part => {
+            if (part.type !== 'literal') parisNowObj[part.type] = parseInt(part.value);
+          });
           
-          // Si déjà passée, passer à demain
-          if (closingDateStr <= parisNow) {
-            closingDateStr.setDate(closingDateStr.getDate() + 1);
+          const closingDate = new Date(
+            parisNowObj.year,
+            parisNowObj.month - 1,
+            parisNowObj.day,
+            targetHour,
+            targetMinute, 0, 0
+          );
+          
+          const offsetMinutes = closingDate.getTimezoneOffset();
+          closingDate.setMinutes(closingDate.getMinutes() + offsetMinutes + 60);
+          
+          if (closingDate.getTime() <= now.getTime()) {
+            closingDate.setDate(closingDate.getDate() + 1);
           }
           
-          closingTimestamp = closingDateStr.getTime();
-          closingTime = new Date(closingTimestamp);
+          closingTimestamp = closingDate.getTime();
+          closingTime = closingDate;
           
-          console.log(`🕐 Clôture : ${targetHour}h${targetMinute.toString().padStart(2, '0')}`);
-          console.log(`📅 Date Paris : ${closingTime.toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}`);
+          console.log(`🕐 Heure : ${targetHour}h${targetMinute.toString().padStart(2, '0')}`);
+          console.log(`📅 Date : ${closingTime.toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}`);
         } else {
           return message.reply('❌ Heure invalide. Format: `21h30`');
         }
       }
     }
-
+    
     const optionsText = options.map((opt, i) => 
       `**${i + 1}.** ${opt.name} — Cote: **${opt.odds}x**`
     ).join('\n');
@@ -1983,6 +2137,7 @@ if (command === '!aide' || command === '!help') {
         name: '!solde', 
         value: 'Votre solde, winrate et statistiques\n🔢 Alias : `!balance`'
       },
+      { name: '!pari [id] [option] [montant]', value: 'Parier sans cliquer sur le bouton\n🔢 Alias : `!p`\nExemple: `!pari 123456789 1 50`\nUtilisez `!paris` pour voir les IDs' },
       { 
         name: '!profil [@user]', 
         value: 'Profil détaillé avec historique (5 derniers paris)\n🔢 Alias : `!profile`, `!stats`'
