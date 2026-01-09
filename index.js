@@ -215,37 +215,74 @@ async function checkCombisForBet(messageId, winningOptions) {
       console.log(`   - Options gagnantes: [${winningOptions.join(', ')}]`);
       console.log(`   - Est gagnant? ${isWinningBet ? '✅' : '❌'}`);
 
-      if (!isWinningBet) {
-        // 🔴 UN PARI PERDU = COMBINÉ PERDU
-        console.log(`❌ COMBINÉ PERDU pour ${combi.username}`);
-        combi.status = 'lost';
-        
-        // Marquer ce pari comme traité
-        if (!combi.processedBets) combi.processedBets = [];
-        combi.processedBets.push(messageId);
-        
-        await combi.save();
+if (!isWinningBet) {
+  // 🔴 UN PARI PERDU = COMBINÉ PERDU
+  console.log(`❌ COMBINÉ PERDU pour ${combi.username}`);
+  combi.status = 'lost';
+  
+  // Marquer ce pari comme traité
+  if (!combi.processedBets) combi.processedBets = [];
+  combi.processedBets.push(messageId);
+  
+  await combi.save();
 
-        const user = await getUser(combi.userId);
-        user.stats.totalBets++;
-        user.stats.lostBets++;
-        await user.save();
+  const user = await getUser(combi.userId);
+  user.stats.totalBets++;
+  user.stats.lostBets++;
+  
+  // ⭐ AJOUTER L'HISTORIQUE
+  user.history.push({
+    betId: combi.combiId,
+    question: `Combiné ${combi.bets.length} matchs`,
+    option: `Cote ${combi.totalOdds.toFixed(2)}x`,
+    amount: combi.totalStake,
+    winnings: 0,
+    result: 'lost',
+    timestamp: new Date()
+  });
+  
+  await user.save();
 
-        // ⭐ NOTIFICATION PARI PERDU (sera affichée dans les résultats)
-        combiNotifications.push({
-        userId: combi.userId,
-        username: combi.username,
-        type: 'lost',
-        question: betInCombi.question,
-        optionName: betInCombi.optionName,
-        stake: combi.totalStake,
-        odds: combi.totalOdds,
-        combiId: combi.combiId,           // ⭐ AJOUTE
-        totalBets: combi.bets.length      // ⭐ AJOUTE
+  // ⭐⭐⭐ ANNONCE PUBLIQUE (AJOUT MANQUANT) ⭐⭐⭐
+  try {
+    const bet = await Bet.findOne({ messageId: messageId });
+    if (bet) {
+      const channel = await client.channels.fetch(bet.channelId);
+      
+      const lostEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('💔 Combiné Perdu')
+        .setDescription(`<@${combi.userId}> a perdu son combiné de **${combi.bets.length} matchs**`)
+        .addFields(
+          { name: '💰 Mise perdue', value: `${combi.totalStake}€`, inline: true },
+          { name: '📊 Cote', value: `${combi.totalOdds.toFixed(2)}x`, inline: true },
+          { name: '❌ Pari perdant', value: `**${betInCombi.question}**\n→ ${betInCombi.optionName}` }
+        )
+        .setFooter({ text: `ID: ${combi.combiId}` })
+        .setTimestamp();
+      
+      await channel.send({ embeds: [lostEmbed] });
+    }
+  } catch (error) {
+    console.error('❌ Erreur annonce combiné perdu:', error);
+  }
+  // ⭐⭐⭐ FIN DE L'AJOUT ⭐⭐⭐
+
+  // Notification pour le message de validation (garder l'existant)
+  combiNotifications.push({
+    userId: combi.userId,
+    username: combi.username,
+    type: 'lost',
+    question: betInCombi.question,
+    optionName: betInCombi.optionName,
+    stake: combi.totalStake,
+    odds: combi.totalOdds,
+    combiId: combi.combiId,
+    totalBets: combi.bets.length
   });
 
-        continue;
-      }
+  continue;
+}
 
       // ✅ Ce pari était gagnant - MAINTENANT on incrémente
       combi.resolvedBets++;
@@ -663,8 +700,9 @@ client.on('messageCreate', async (message) => {
 
   if (command === '!classement' || command === '!leaderboard' || command === '!top') {
     const sortBy = args[1] || 'solde';
-    
-    const users = await User.find({});
+    const users = await User.find({
+    userId: { $regex: /^[0-9]{17,19}$/ } // ⭐ Garde seulement les vrais IDs Discord
+  });
     const userList = users.map(u => ({
       userId: u.userId,
       balance: u.balance,
