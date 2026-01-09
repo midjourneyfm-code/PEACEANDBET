@@ -401,8 +401,7 @@ client.on('interactionCreate', async (interaction) => {
           await user.save();
   }
 }
-
-
+      
       bet.status = 'cancelled';
       await bet.save();
 
@@ -723,7 +722,7 @@ client.on('interactionCreate', async (interaction) => {
 
   await interaction.reply({ embeds: [successEmbed], ephemeral: true });
   }
-});
+};
 
 // ==================== COMMANDES ====================
 
