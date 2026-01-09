@@ -1104,23 +1104,28 @@ if (command === '!annuler-tout' || command === '!cancelall') {
       const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
       const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
       
-      if (hoursMatch) {
-        const targetHour = parseInt(hoursMatch[1]);
-        const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
-        
-        if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-          const now = new Date();
-          const parisTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-          
-          const closingDate = new Date(parisTime);
-          closingDate.setHours(targetHour, targetMinute, 0, 0);
-          
-          if (closingDate.getTime() <= parisTime.getTime()) {
-            closingDate.setDate(closingDate.getDate() + 1);
-          }
-          
-          closingTimestamp = closingDate.getTime();
-          closingTime = closingDate;
+if (hoursMatch) {
+  const targetHour = parseInt(hoursMatch[1]);
+  const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+  
+  if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
+    // ⭐ CRÉER LA DATE DIRECTEMENT EN UTC+1
+    const now = new Date();
+    
+    // ⭐ Obtenir l'heure actuelle à Paris
+    const parisNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
+    
+    // ⭐ Créer la date de clôture à Paris
+    const closingDate = new Date();
+    closingDate.setHours(targetHour, targetMinute, 0, 0);
+    
+    // ⭐ Si l'heure de clôture est passée aujourd'hui, passer à demain
+    if (closingDate.getTime() <= now.getTime()) {
+      closingDate.setDate(closingDate.getDate() + 1);
+    }
+    
+    closingTimestamp = closingDate.getTime();
+    closingTime = closingDate;
         } else {
           return message.reply('❌ Heure invalide. Format: `21h30` (heure entre 0 et 23, minutes entre 0 et 59)');
         }
@@ -1300,23 +1305,28 @@ if (command === '!annuler-tout' || command === '!cancelall') {
       const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
       const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
       
-      if (hoursMatch) {
-        const targetHour = parseInt(hoursMatch[1]);
-        const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
-        
-        if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-          const now = new Date();
-          const parisTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-          
-          const closingDate = new Date(parisTime);
-          closingDate.setHours(targetHour, targetMinute, 0, 0);
-          
-          if (closingDate.getTime() <= parisTime.getTime()) {
-            closingDate.setDate(closingDate.getDate() + 1);
-          }
-          
-          closingTimestamp = closingDate.getTime();
-          closingTime = closingDate;
+if (hoursMatch) {
+  const targetHour = parseInt(hoursMatch[1]);
+  const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+  
+  if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
+    // ⭐ CRÉER LA DATE DIRECTEMENT EN UTC+1
+    const now = new Date();
+    
+    // ⭐ Obtenir l'heure actuelle à Paris
+    const parisNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
+    
+    // ⭐ Créer la date de clôture à Paris
+    const closingDate = new Date();
+    closingDate.setHours(targetHour, targetMinute, 0, 0);
+    
+    // ⭐ Si l'heure de clôture est passée aujourd'hui, passer à demain
+    if (closingDate.getTime() <= now.getTime()) {
+      closingDate.setDate(closingDate.getDate() + 1);
+    }
+    
+    closingTimestamp = closingDate.getTime();
+    closingTime = closingDate;
         }
       }
     }
@@ -1907,21 +1917,18 @@ if (command === '!mes-combis' || command === '!mc') {
           betStatusEmoji = '🚫';
         }
         
-        fieldValue += `${i + 1}. ${betStatusEmoji} **${b.question}**\n`;
-        fieldValue += `   ➜ Sélection : ${b.optionName} (${b.odds}x)\n`;
-        fieldValue += `   ➜ Mise : ${b.amount}€ | ID: \`${b.messageId}\`\n`;
+       fieldValue += `${i + 1}. ${betStatusEmoji} ${b.question} → ${b.optionName} (${b.odds}x)\n`;
       }
-      
-      fieldValue += `\n**🆔 ID :** \`${combi.combiId}\``;
 
       embed.addFields({
-        name: `📅 ${new Date(combi.createdAt).toLocaleDateString('fr-FR', { 
+        name: `📅 ${new Date(combi.createdAt).toLocaleString('fr-FR', { 
+          timeZone: 'Europe/Paris',
           year: 'numeric', 
           month: 'long', 
           day: 'numeric',
           hour: '2-digit',
           minute: '2-digit'
-        })}`,
+  })}`,
         value: fieldValue,
         inline: false
       });
@@ -1932,32 +1939,83 @@ if (command === '!mes-combis' || command === '!mc') {
     message.reply({ embeds: [embed] });
   }
   
-  if (command === '!aide' || command === '!help') {
-    const helpEmbed = new EmbedBuilder()
-      .setColor('#0099ff')
-      .setTitle('📚 Aide - Bot de Paris avec Cotes')
-      .setDescription('Voici toutes les commandes disponibles :')
-      .addFields(
-        { name: '👤 Commandes Utilisateur', value: '\u200b', inline: false },
-        { name: '!solde', value: 'Affiche votre solde, winrate et statistiques' },
-        { name: '!classement', value: 'Classement des joueurs (cliquez pour trier par solde ou winrate)' },
-        { name: '!profil [@user]', value: 'Affiche le profil complet avec historique des 5 derniers paris' },
-        { name: '!paris', value: 'Liste tous les paris actifs avec ID et options pour valider' },
-        { name: '!don @user montant', value: 'Faire un don à un autre joueur\nExemple: `!don @Jean 50`' },
-        { name: '💰 Parier', value: 'Cliquez sur le bouton, entrez le montant dans la fenêtre\n**⚠️ UN SEUL PARI par match !**' },
-        { name: '⚙️ Commandes Admin', value: `(Rôle requis: **${BETTING_CREATOR_ROLE}**)`, inline: false },
-        { name: '!creer-pari', value: 'Format : `!creer-pari Question ? | Option1:cote1 | Option2:cote2 | heure`\nExemple: `!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | 21h30`\nHeure optionnelle = heure de clôture (format 24h)' },
-        { name: '!boost', value: '⚡💎 **PARI SPÉCIAL BOOSTÉ** 💎⚡\nFormat: `!boost Nom de l\'event | cote | heure`\nExemple: `!boost Victoire PSG | 5.5 | 21h30`\nUne seule option, cote élevée, visuel attractif !' },
-        { name: '!valider [id] [options]', value: 'Valide un pari\nEx: `!valider 123456789 1 3`' },
-        { name: '!modifier-solde @user montant', value: 'Modifie le solde d\'un utilisateur\nEx: `!modifier-solde @Jean 500`' },
-        { name: '!annuler-tout', value: '🚫 Annule TOUS les paris actifs et rembourse tout le monde' },
-        { name: '⏰ Clôture automatique', value: 'Heure absolue (ex: 21h30 = clôture à 21h30)\nRappel automatique 1h avant\nPari reste ouvert pour validation après clôture' },
-        { name: '📊 Cotes', value: 'Gain = Mise × Cote\nExemple: 50€ × 2.5 = 125€ de gain' }
-      )
-      .setFooter({ text: 'Bot de Paris Discord' });
+if (command === '!aide' || command === '!help') {
+  const helpEmbed = new EmbedBuilder()
+    .setColor('#0099ff')
+    .setTitle('📚 Commandes du Bot de Paris')
+    .setDescription('Voici les commandes principales pour parier et suivre vos gains.')
+    .addFields(
+      // ========== SECTION PARIS SIMPLES ==========
+      { name: '\u200b', value: '**💰 PARIS SIMPLES**', inline: false },
+      { 
+        name: '🎲 Parier sur un match', 
+        value: '1. Trouvez un pari avec `!paris`\n2. Cliquez sur le bouton de l\'option choisie\n3. Entrez votre mise dans la fenêtre\n\n⚠️ **Un seul pari par match**' 
+      },
+      
+      // ========== SECTION COMBINÉS ==========
+      { name: '\u200b', value: '**🎰 COMBINÉS** (Multipliez vos cotes !)', inline: false },
+      { 
+        name: '!combi-add', 
+        value: '**Créer un combiné de plusieurs matchs**\n\n' +
+               '📝 Format : `!combi-add <id1> <opt1> <id2> <opt2> ... <montant>`\n\n' +
+               '📌 Exemples :\n' +
+               '• 2 matchs : `!ca 123456 1 789012 2 100`\n' +
+               '• 3 matchs : `!ca 111 1 222 3 333 2 150`\n\n' +
+               '✅ Validez avec les boutons ✅/❌\n' +
+               '🔢 Alias : `!ca`'
+      },
+      { 
+        name: '!mes-combis', 
+        value: 'Voir vos 3 derniers combinés\n🔢 Alias : `!mc`'
+      },
+      { 
+        name: '!combi-cancel [id]', 
+        value: 'Annuler un combiné validé (si aucun match terminé)\n🔢 Alias : `!cc`'
+      },
+      
+      // ========== SECTION PROFIL ==========
+      { name: '\u200b', value: '**👤 PROFIL & STATS**', inline: false },
+      { 
+        name: '!solde', 
+        value: 'Votre solde, winrate et statistiques\n🔢 Alias : `!balance`'
+      },
+      { 
+        name: '!profil [@user]', 
+        value: 'Profil détaillé avec historique (5 derniers paris)\n🔢 Alias : `!profile`, `!stats`'
+      },
+      { 
+        name: '!classement', 
+        value: 'Top 10 des joueurs (solde ou winrate)\n🔢 Alias : `!leaderboard`, `!top`'
+      },
+      
+      // ========== SECTION UTILITAIRES ==========
+      { name: '\u200b', value: '**🔧 UTILITAIRES**', inline: false },
+      { 
+        name: '!paris', 
+        value: 'Liste tous les paris actifs avec leurs IDs'
+      },
+      { 
+        name: '!don @user <montant>', 
+        value: 'Faire un don à un autre joueur\n📌 Ex : `!don @Jean 50`\n🔢 Alias : `!give`'
+      },
+      
+      // ========== SECTION ADMIN (RÉDUITE) ==========
+      { name: '\u200b', value: `**⚙️ ADMIN** (Rôle : **${BETTING_CREATOR_ROLE}**)`, inline: false },
+      { 
+        name: 'Commandes principales', 
+        value: '`!creer-pari` - Créer un pari\n' +
+               '`!boost` - Créer un pari boosté\n' +
+               '`!valider [id] [options]` - Valider un pari\n' +
+               '`!lock [id]` - Clôturer manuellement\n' +
+               '`!modifier-solde @user <montant>` - Modifier le solde\n' +
+               '`!annuler-tout` - Annuler tous les paris'
+      }
+    )
+    .setFooter({ text: '💡 Astuce : Les cotes se multiplient dans les combinés !' })
+    .setTimestamp();
 
-    message.reply({ embeds: [helpEmbed] });
-  }
+  message.reply({ embeds: [helpEmbed] });
+}
 
   if (command === '!debug-pari') {
     const member = await message.guild.members.fetch(message.author.id);
