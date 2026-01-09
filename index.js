@@ -489,12 +489,16 @@ client.on('interactionCreate', async (interaction) => {
     const [action, betId, ...params] = interaction.customId.split('_');
 
 if (action === 'sor') {
-  const subaction = params[0]; // 'continue' ou 'cashout'
-  const userId = params[1];
+  // ⭐ CORRECTION : Le parsing était incorrect
+  // customId format: "sor_continue_123456789" ou "sor_cashout_123456789" ou "sor_cancel_123456789"
+  const subaction = interaction.customId.split('_')[1]; // 'continue', 'cashout' ou 'cancel'
+  const userId = interaction.customId.split('_')[2]; // L'ID utilisateur
 
   console.log('🔍 DEBUG SOR BUTTON');
-  console.log('interaction.user.id:', interaction.user.id);
+  console.log('customId complet:', interaction.customId);
+  console.log('subaction:', subaction);
   console.log('userId from button:', userId);
+  console.log('interaction.user.id:', interaction.user.id);
   console.log('Match?', interaction.user.id === userId);
 
   // Vérifier que c'est bien le joueur
@@ -509,6 +513,41 @@ if (action === 'sor') {
   }
 
   const multipliers = getSafeOrRiskMultipliers();
+
+  // ❌ ANNULER LA PARTIE
+  if (subaction === 'cancel') {
+    // Vérifier qu'on est bien au tour 1
+    if (game.round !== 1) {
+      return interaction.reply({ 
+        content: '❌ Impossible d\'annuler ! Vous pouvez seulement annuler au tour 1.', 
+        ephemeral: true 
+      });
+    }
+
+    // Rembourser le joueur
+    const user = await getUser(userId);
+    user.balance += game.stake;
+    await user.save();
+
+    // Supprimer la partie
+    activeSafeOrRiskGames.delete(userId);
+
+    const cancelEmbed = new EmbedBuilder()
+      .setColor('#808080')
+      .setTitle('🚫 Partie Annulée')
+      .setDescription(
+        `Vous avez annulé votre partie de Safe or Risk.\n\n` +
+        `💰 **Mise remboursée :** ${game.stake}€\n` +
+        `💳 **Solde actuel :** ${user.balance}€`
+      )
+      .setFooter({ text: '🎲 Relancez avec !safe-or-risk [montant]' })
+      .setTimestamp();
+
+    await interaction.update({ embeds: [cancelEmbed], components: [] });
+    
+    console.log(`🚫 ${interaction.user.tag} annule sa partie (remboursé ${game.stake}€)`);
+    return;
+  }
 
   // ✅ ENCAISSER
   if (subaction === 'cashout') {
