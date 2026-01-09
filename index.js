@@ -1298,63 +1298,113 @@ if (command === '!annuler-tout' || command === '!cancelall') {
 
   message.reply({ embeds: [embed] });
 }
-  if (command === '!boostloose' || command === '!boostperdu') {
-  const betMessageId = args[1];
+    if (command === '!boostloose' || command === '!boostperdu') {
+    const betMessageId = args[1];
 
-  if (!betMessageId) {
-    return message.reply('❌ Format incorrect. Utilisez : `!boostloose [messageId]`\nExemple: `!boostloose 123456789`');
+    if (!betMessageId) {
+      return message.reply('❌ Format incorrect. Utilisez : `!boostperdu [messageId]`\nExemple: `!boostperdu 123456789`');
+    }
+
+    const bet = await Bet.findOne({ messageId: betMessageId });
+
+    if (!bet) {
+      return message.reply('❌ Pari introuvable. Vérifiez l\'ID du message.');
+    }
+
+    const member = await message.guild.members.fetch(message.author.id);
+    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+    if (!hasRole) {
+      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour valider des paris.`);
+    }
+
+    if (bet.creator !== message.author.id) {
+      return message.reply('❌ Seul le créateur du pari peut le valider.');
+    }
+
+    if (!bet.isBoosted) {
+      return message.reply('❌ Cette commande est réservée aux paris boostés. Utilisez `!valider` pour les paris normaux.');
+    }
+
+    if (bet.status === 'resolved' || bet.status === 'cancelled') {
+      return message.reply('❌ Ce pari a déjà été résolu ou annulé.');
+    }
+
+    // Convertir bettors
+    const bettorsObj = bet.bettors instanceof Map 
+      ? Object.fromEntries(bet.bettors) 
+      : (bet.bettors || {});
+
+    if (Object.keys(bettorsObj).length === 0) {
+      return message.reply('⚠️ Aucun parieur sur ce boost.');
+    }
+
+    // ❌ BOOST PERDU : Mettre à jour les stats de tous les parieurs
+    let lostCount = 0;
+    let totalLost = 0;
+
+    for (const [userId, betData] of Object.entries(bettorsObj)) {
+      const user = await getUser(userId);
+      user.stats.totalBets++;
+      user.stats.lostBets++;
+      user.history.push({
+        betId: bet.messageId,
+        question: bet.question,
+        option: bet.options[0].name,
+        amount: betData.amount,
+        winnings: 0,
+        result: 'lost',
+        timestamp: new Date()
+      });
+      await user.save();
+      lostCount++;
+      totalLost += betData.amount;
+    }
+
+    // Marquer le boost comme résolu (perdu)
+    bet.status = 'resolved';
+    bet.winningOptions = []; // Aucun gagnant
+    await bet.save();
+
+    // Mettre à jour le message Discord
+    try {
+      const channel = await client.channels.fetch(bet.channelId);
+      const betMessage = await channel.messages.fetch(betMessageId);
+      
+      const updatedEmbed = EmbedBuilder.from(betMessage.embeds[0])
+        .setColor('#000000')
+        .setTitle('⚡💎 BOOST PERDU 💎⚡')
+        .setDescription(
+          `╔════════════════════════════════╗\n` +
+          `║                                                              ║\n` +
+          `║    ❌ **${bet.options[0].name}** ❌    ║\n` +
+          `║                                                              ║\n` +
+          `║         **BOOST PERDU**         ║\n` +
+          `║                                                              ║\n` +
+          `╚════════════════════════════════╝\n\n` +
+          `💸 **Tous les parieurs ont perdu leur mise.**`
+        );
+
+      await betMessage.edit({ embeds: [updatedEmbed], components: [] });
+    } catch (error) {
+      console.error('Erreur mise à jour message:', error);
+    }
+
+    // Réponse de confirmation
+    const resultEmbed = new EmbedBuilder()
+      .setColor('#000000')
+      .setTitle('❌ Boost Déclaré Perdu')
+      .setDescription(`Le boost **${bet.options[0].name}** a été déclaré perdu.`)
+      .addFields(
+        { name: '👥 Parieurs', value: `${lostCount}`, inline: true },
+        { name: '💸 Total perdu', value: `${totalLost}€`, inline: true }
+      )
+      .setFooter({ text: 'Toutes les mises sont perdues' })
+      .setTimestamp();
+
+    message.reply({ embeds: [resultEmbed] });
   }
-
-  const bet = await Bet.findOne({ messageId: betMessageId });
-
-  if (!bet) {
-    return message.reply('❌ Pari introuvable. Vérifiez l\'ID du message.');
-  }
-
-  const member = await message.guild.members.fetch(message.author.id);
-  const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
-
-  if (!hasRole) {
-    return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour valider des paris.`);
-  }
-
-  if (bet.creator !== message.author.id) {
-    return message.reply('❌ Seul le créateur du pari peut le valider.');
-  }
-
-  if (!bet.isBoosted) {
-    return message.reply('❌ Cette commande est réservée aux paris boostés. Utilisez `!valider` pour les paris normaux.');
-  }
-
-  if (bet.status === 'resolved' || bet.status === 'cancelled') {
-    return message.reply('❌ Ce pari a déjà été résolu ou annulé.');
-  }
-
-  // Créer le bouton de confirmation
-  const confirmRow = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`boostloose_confirm_${betMessageId}`)
-        .setLabel(`❌ Confirmer : ${bet.options[0].name} PERDU`)
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('❌')
-    );
-
-  const confirmEmbed = new EmbedBuilder()
-    .setColor('#FF0000')
-    .setTitle('⚡💎 Confirmation Pari Boosté PERDU 💎⚡')
-    .setDescription(
-      `Êtes-vous sûr de déclarer ce pari boosté comme **PERDU** ?\n\n❌ **${bet.options[0].name}** (Cote: ${bet.initialOdds[0]}x)\n\n**Tous les parieurs perdront leur mise.**\n\n**Cette action est irréversible.**`
-    )
-    .addFields(
-      { name: '👥 Parieurs', value: `${bet.bettors ? Object.keys(bet.bettors).length : 0}`, inline: true },
-      { name: '💵 Mises totales', value: `${bet.totalPool}€`, inline: true }
-    )
-    .setFooter({ text: 'Cliquez sur le bouton pour confirmer' });
-
-  await message.reply({ embeds: [confirmEmbed], components: [confirmRow] });
-}
-
+  
   if (command === '!aide' || command === '!help') {
     const helpEmbed = new EmbedBuilder()
       .setColor('#0099ff')
