@@ -449,6 +449,90 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
+  if (action === 'combi') {
+  const subaction = params[0];
+  const userId = params[1];
+
+  // Vérifier que c'est bien l'utilisateur qui a créé le combiné
+  if (interaction.user.id !== userId) {
+    return interaction.reply({ content: '❌ Ce combiné n\'est pas le vôtre !', ephemeral: true });
+  }
+
+  if (subaction === 'cancel') {
+    // Annuler le combiné
+    tempCombis.delete(userId);
+    
+    const cancelEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+      .setColor('#808080')
+      .setTitle('🗑️ Combiné Annulé')
+      .setDescription('Vous avez annulé la création du combiné.');
+
+    await interaction.update({ embeds: [cancelEmbed], components: [] });
+    return;
+  }
+
+  if (subaction === 'confirm') {
+    // Récupérer les données temporaires
+    const basket = tempCombis.get(userId);
+
+    if (!basket) {
+      return interaction.reply({ content: '❌ Combiné expiré. Veuillez recréer votre combiné.', ephemeral: true });
+    }
+
+    // Vérifier le solde à nouveau
+    const user = await getUser(userId);
+    if (user.balance < basket.totalStake) {
+      tempCombis.delete(userId);
+      return interaction.reply({ 
+        content: `❌ Solde insuffisant. Vous avez ${user.balance}€, mais le combiné coûte ${basket.totalStake}€.`, 
+        ephemeral: true 
+      });
+    }
+
+    // Déduire le solde
+    user.balance -= basket.totalStake;
+    await user.save();
+
+    // Créer le combiné dans la DB
+    const combiId = `combi_${userId}_${Date.now()}`;
+
+    const newCombi = new Combi({
+      combiId,
+      userId: userId,
+      username: interaction.user.tag,
+      bets: basket.bets,
+      totalOdds: basket.totalOdds,
+      totalStake: basket.totalStake,
+      potentialWin: basket.potentialWin,
+      status: 'confirmed',
+      resolvedBets: 0
+    });
+    await newCombi.save();
+
+    // Supprimer le panier temporaire
+    tempCombis.delete(userId);
+
+    // Confirmation
+    const successEmbed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ Combiné Créé !')
+      .setDescription(`Votre combiné de **${basket.bets.length} matchs** a été enregistré avec succès.`)
+      .addFields(
+        { name: '📊 Cote totale', value: `${basket.totalOdds.toFixed(2)}x`, inline: true },
+        { name: '💰 Mise', value: `${basket.totalStake}€`, inline: true },
+        { name: '🎁 Gain potentiel', value: `${basket.potentialWin}€`, inline: true },
+        { name: '🆔 ID du combiné', value: `\`${combiId}\`` },
+        { name: '💳 Nouveau solde', value: `${user.balance}€` }
+      )
+      .setFooter({ text: 'Bonne chance ! Utilisez !mes-combis pour suivre vos combinés' })
+      .setTimestamp();
+
+    await interaction.update({ embeds: [successEmbed], components: [] });
+
+    console.log(`✅ Combiné créé : ${combiId} par ${interaction.user.tag} - ${basket.bets.length} paris`);
+  }
+}
+
   if (interaction.isModalSubmit()) {
     const [action, subaction, betId, optionIndex] = interaction.customId.split('_');
 
@@ -1515,149 +1599,173 @@ if (command === '!annuler-tout' || command === '!cancelall') {
   }
 
   if (command === '!combi-add' || command === '!ca') {
-  const betMessageId = args[1];
-  const optionNum = parseInt(args[2]);
-  const amount = parseInt(args[3]);
-
-  // Validation des arguments
-  if (!betMessageId || isNaN(optionNum) || isNaN(amount) || amount <= 0) {
-    return message.reply('❌ Format : `!combi-add [messageId] [option] [montant]`\nExemple : `!combi-add 123456789 1 50`');
+  // Format : !combi-add <id1> <opt1> <id2> <opt2> ... <montant>
+  
+  // Vérification du nombre d'arguments (minimum 5 : 2 paris + montant)
+  // 2 paris = 4 args (id1, opt1, id2, opt2) + 1 montant = 5 args minimum
+  if (args.length < 5) {
+    return message.reply(
+      '❌ **Format incorrect !**\n\n' +
+      '📋 **Usage :** `!combi-add <id1> <option1> <id2> <option2> ... <montant>`\n\n' +
+      '**Exemple avec 2 matchs :**\n' +
+      '`!combi-add 123456789 1 987654321 2 100`\n' +
+      '→ Pari sur match 123456789 option 1 + match 987654321 option 2 pour 100€\n\n' +
+      '**Exemple avec 3 matchs :**\n' +
+      '`!combi-add 111111 1 222222 3 333333 2 150`\n\n' +
+      '⚠️ **Minimum 2 matchs requis**'
+    );
   }
 
-  // Vérifier que le pari existe
-  const bet = await Bet.findOne({ messageId: betMessageId });
-  if (!bet) {
-    return message.reply('❌ Pari introuvable. Utilisez `!paris` pour voir les IDs.');
+  // Le dernier argument est le montant
+  const amount = parseInt(args[args.length - 1]);
+  
+  if (isNaN(amount) || amount <= 0) {
+    return message.reply('❌ Le dernier argument doit être le montant (nombre positif).\nExemple : `!combi-add 123456 1 789012 2 100`');
   }
 
-  if (bet.status !== 'open') {
-    return message.reply('❌ Ce pari est fermé ou clôturé.');
+  // Les autres arguments sont des paires (id, option)
+  const pairArgs = args.slice(1, -1); // Retire la commande et le montant
+  
+  // Vérifier que le nombre d'arguments est pair
+  if (pairArgs.length % 2 !== 0) {
+    return message.reply(
+      '❌ **Arguments invalides !**\n\n' +
+      'Vous devez fournir des **paires** (ID du pari + numéro d\'option).\n\n' +
+      '✅ **Format correct :**\n' +
+      '`!combi-add <id1> <option1> <id2> <option2> <montant>`\n\n' +
+      `Vous avez fourni ${pairArgs.length} arguments (doit être pair).`
+    );
   }
 
-  const optionIndex = optionNum - 1;
-  if (optionIndex < 0 || optionIndex >= bet.options.length) {
-    return message.reply(`❌ Option invalide. Choisissez entre 1 et ${bet.options.length}`);
+  // Vérifier minimum 2 paris
+  const numberOfBets = pairArgs.length / 2;
+  if (numberOfBets < 2) {
+    return message.reply('❌ Un combiné doit contenir **au minimum 2 paris**.');
   }
 
-  // Vérifier le solde
+  // Vérifier le solde AVANT de traiter
   const user = await getUser(message.author.id);
   if (user.balance < amount) {
-    return message.reply(`❌ Solde insuffisant. Vous avez **${user.balance}€**.`);
+    return message.reply(`❌ Solde insuffisant. Vous avez **${user.balance}€**, le combiné coûte **${amount}€**.`);
   }
 
-  // Vérifier qu'il n'a pas déjà parié sur ce match
-  if (bet.bettors && bet.bettors[message.author.id]) {
-    return message.reply('❌ Vous avez déjà un pari simple sur ce match. Impossible de l\'ajouter au combiné.');
+  // Préparer les données du combiné
+  const combiBets = [];
+  let totalOdds = 1;
+  const seenBets = new Set(); // Pour éviter les doublons
+
+  // Traiter chaque paire (id, option)
+  for (let i = 0; i < pairArgs.length; i += 2) {
+    const betMessageId = pairArgs[i];
+    const optionNum = parseInt(pairArgs[i + 1]);
+
+    // Vérifier que l'option est un nombre
+    if (isNaN(optionNum)) {
+      return message.reply(`❌ L'argument ${i + 2} (option pour le pari ${i / 2 + 1}) doit être un **numéro** d'option.\nReçu : "${pairArgs[i + 1]}"`);
+    }
+
+    // Vérifier les doublons
+    if (seenBets.has(betMessageId)) {
+      return message.reply(`❌ Vous ne pouvez pas parier **deux fois** sur le même match !\nMatch dupliqué : \`${betMessageId}\``);
+    }
+    seenBets.add(betMessageId);
+
+    // Récupérer le pari depuis la DB
+    const bet = await Bet.findOne({ messageId: betMessageId });
+    
+    if (!bet) {
+      return message.reply(`❌ Pari introuvable : \`${betMessageId}\`\nUtilisez \`!paris\` pour voir les IDs disponibles.`);
+    }
+
+    if (bet.status !== 'open') {
+      return message.reply(`❌ Le pari \`${betMessageId}\` est **fermé ou clôturé**.\nQuestion : "${bet.question}"`);
+    }
+
+    const optionIndex = optionNum - 1;
+    if (optionIndex < 0 || optionIndex >= bet.options.length) {
+      return message.reply(
+        `❌ Option invalide pour le pari "${bet.question}"\n` +
+        `Vous avez choisi l'option **${optionNum}**, mais ce pari a **${bet.options.length} option(s)**.\n` +
+        `Options disponibles : ${bet.options.map((o, i) => `${i + 1}. ${o.name}`).join(', ')}`
+      );
+    }
+
+    // Vérifier qu'il n'a pas déjà parié sur ce match (pari simple)
+    if (bet.bettors && bet.bettors[message.author.id]) {
+      return message.reply(
+        `❌ Vous avez déjà un **pari simple** sur ce match !\n` +
+        `Match : "${bet.question}"\n` +
+        `Impossible de l'ajouter à un combiné.`
+      );
+    }
+
+    // Ajouter au combiné
+    const odds = bet.initialOdds[optionIndex];
+    combiBets.push({
+      betId: bet._id.toString(),
+      messageId: betMessageId,
+      question: bet.question,
+      optionIndex,
+      optionName: bet.options[optionIndex].name,
+      odds,
+      amount: Math.floor(amount / numberOfBets) // Répartition égale (arrondi à l'entier inférieur)
+    });
+
+    totalOdds *= odds;
   }
 
-  // Créer ou récupérer le panier temporaire
-  if (!tempCombis.has(message.author.id)) {
-    tempCombis.set(message.author.id, { bets: [], totalOdds: 1, totalStake: 0 });
-  }
+  // Calcul du gain potentiel
+  const potentialWin = Math.floor(amount * totalOdds);
+  const profit = potentialWin - amount;
 
-  const basket = tempCombis.get(message.author.id);
-
-  // Vérifier qu'il n'a pas déjà ce pari dans son panier
-  if (basket.bets.some(b => b.messageId === betMessageId)) {
-    return message.reply('❌ Ce match est déjà dans votre combiné.');
-  }
-
-  // Ajouter au panier
-  const odds = bet.initialOdds[optionIndex];
-  basket.bets.push({
-    betId: bet._id.toString(),
-    messageId: betMessageId,
-    question: bet.question,
-    optionIndex,
-    optionName: bet.options[optionIndex].name,
-    odds,
-    amount
+  // Créer l'embed de confirmation
+  let betsDescription = '';
+  combiBets.forEach((b, i) => {
+    betsDescription += `**${i + 1}.** ${b.question}\n`;
+    betsDescription += `   ➜ ${b.optionName} **(cote ${b.odds}x)**\n\n`;
   });
-  basket.totalOdds *= odds;
-  basket.totalStake += amount;
 
-  const potentialWin = Math.floor(basket.totalStake * basket.totalOdds);
-
-  // Afficher le panier
-  let basketText = '🎰 **Votre Combiné en Cours**\n\n';
-  basket.bets.forEach((b, i) => {
-    basketText += `${i + 1}. **${b.question}**\n   ➜ ${b.optionName} (${b.odds}x) — ${b.amount}€\n\n`;
-  });
-  basketText += `📊 **Cote totale :** ${basket.totalOdds.toFixed(2)}x\n`;
-  basketText += `💰 **Mise totale :** ${basket.totalStake}€\n`;
-  basketText += `🎯 **Gain potentiel :** ${potentialWin}€ (profit: +${potentialWin - basket.totalStake}€)\n\n`;
-  basketText += `✅ Pour valider : \`!combi-valider\`\n❌ Pour annuler : \`!combi-annuler\``;
-
-  message.reply(basketText);
-}
-
-  if (command === '!combi-valider' || command === '!cv') {
-  if (!tempCombis.has(message.author.id)) {
-    return message.reply('❌ Vous n\'avez pas de combiné en cours. Utilisez `!combi-add` pour commencer.');
-  }
-
-  const basket = tempCombis.get(message.author.id);
-
-  if (basket.bets.length < 2) {
-    return message.reply('❌ Un combiné doit contenir au minimum 2 paris.');
-  }
-
-  const user = await getUser(message.author.id);
-  if (user.balance < basket.totalStake) {
-    return message.reply(`❌ Solde insuffisant. Vous avez ${user.balance}€, mais le combiné coûte ${basket.totalStake}€.`);
-  }
-
-  // Déduire le solde
-  user.balance -= basket.totalStake;
-  await user.save();
-
-  // Créer le combiné dans la DB
-  const combiId = `combi_${message.author.id}_${Date.now()}`;
-  const potentialWin = Math.floor(basket.totalStake * basket.totalOdds);
-
-  const newCombi = new Combi({
-    combiId,
-    userId: message.author.id,
-    username: message.author.tag,
-    bets: basket.bets,
-    totalOdds: basket.totalOdds,
-    totalStake: basket.totalStake,
-    potentialWin,
-    status: 'confirmed',
-    resolvedBets: 0
-  });
-  await newCombi.save();
-
-  // Supprimer le panier temporaire
-  tempCombis.delete(message.author.id);
-
-  // Confirmation
-  const embed = new EmbedBuilder()
-    .setColor('#00FF00')
-    .setTitle('✅ Combiné Validé !')
-    .setDescription(`Votre combiné a été enregistré avec succès.`)
-    .addFields(
-      { name: '🎯 Nombre de paris', value: `${basket.bets.length}`, inline: true },
-      { name: '📊 Cote totale', value: `${basket.totalOdds.toFixed(2)}x`, inline: true },
-      { name: '💰 Mise totale', value: `${basket.totalStake}€`, inline: true },
-      { name: '🎁 Gain potentiel', value: `${potentialWin}€`, inline: true },
-      { name: '🆔 ID du combiné', value: `\`${combiId}\`` },
-      { name: '💳 Nouveau solde', value: `${user.balance}€` }
+  const confirmEmbed = new EmbedBuilder()
+    .setColor('#FFA500')
+    .setTitle('⚠️ Confirmation de Combiné')
+    .setDescription(
+      `Vous êtes sur le point de créer un combiné de **${combiBets.length} matchs** :\n\n` +
+      betsDescription
     )
-    .setFooter({ text: 'Annulation possible avec !combi-cancel [ID]' });
+    .addFields(
+      { name: '📊 Cote totale', value: `**${totalOdds.toFixed(2)}x**`, inline: true },
+      { name: '💰 Mise totale', value: `**${amount}€**`, inline: true },
+      { name: '🎯 Gain potentiel', value: `**${potentialWin}€**`, inline: true },
+      { name: '💸 Profit', value: `**+${profit}€**`, inline: true },
+      { name: '💳 Votre solde après', value: `${user.balance - amount}€`, inline: true },
+      { name: '\u200b', value: '\u200b', inline: true }
+    )
+    .setFooter({ text: 'Cliquez sur ✅ pour confirmer ou ❌ pour annuler' })
+    .setTimestamp();
 
-  message.reply({ embeds: [embed] });
+  // Créer les boutons de confirmation
+  const confirmRow = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`combi_confirm_${message.author.id}_${Date.now()}`)
+        .setLabel('✅ Valider le Combiné')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`combi_cancel_${message.author.id}`)
+        .setLabel('❌ Annuler')
+        .setStyle(ButtonStyle.Danger)
+    );
 
-  console.log(`✅ Combiné créé : ${combiId} par ${message.author.tag}`);
-}
+  // Stocker temporairement les données du combiné
+  tempCombis.set(message.author.id, {
+    bets: combiBets,
+    totalOdds,
+    totalStake: amount,
+    potentialWin,
+    timestamp: Date.now()
+  });
 
-  if (command === '!combi-annuler' || command === '!cann') {
-  if (!tempCombis.has(message.author.id)) {
-    return message.reply('❌ Vous n\'avez pas de combiné en cours.');
-  }
-
-  tempCombis.delete(message.author.id);
-  message.reply('🗑️ Votre combiné en cours a été annulé.');
+  await message.reply({ embeds: [confirmEmbed], components: [confirmRow] });
 }
 
   if (command === '!combi-cancel' || command === '!cc') {
