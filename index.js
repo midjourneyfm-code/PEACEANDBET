@@ -54,8 +54,14 @@ const betSchema = new mongoose.Schema({
   winningOptions: [Number]
 });
 
+const dailySpinSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  lastSpin: { type: Date, default: null }
+});
+
 const User = mongoose.model('User', userSchema);
 const Bet = mongoose.model('Bet', betSchema);
+const DailySpin = mongoose.model('DailySpin', dailySpinSchema);
 
 const combiSchema = new mongoose.Schema({
   combiId: { type: String, required: true, unique: true },
@@ -174,6 +180,46 @@ async function sendReminder(messageId) {
   } catch (error) {
     console.error('Erreur rappel:', error);
   }
+}
+
+async function canSpinToday(userId) {
+  const spinData = await DailySpin.findOne({ userId });
+  
+  if (!spinData || !spinData.lastSpin) {
+    return true; // Jamais tourné
+  }
+  
+  const now = new Date();
+  const lastSpin = new Date(spinData.lastSpin);
+  
+  // Vérifier si c'est un jour différent
+  const isSameDay = 
+    now.getFullYear() === lastSpin.getFullYear() &&
+    now.getMonth() === lastSpin.getMonth() &&
+    now.getDate() === lastSpin.getDate();
+  
+  return !isSameDay;
+}
+
+async function updateLastSpin(userId) {
+  await DailySpin.findOneAndUpdate(
+    { userId },
+    { lastSpin: new Date() },
+    { upsert: true }
+  );
+}
+
+function spinRoulette() {
+  const random = Math.random() * 100; // 0-100
+  
+  if (random < 30) return 1;        // 30%
+  if (random < 55) return 5;        // 25%
+  if (random < 70) return 8;        // 15%
+  if (random < 80) return 10;       // 10%
+  if (random < 88) return 20;       // 8%
+  if (random < 94) return 30;       // 6%
+  if (random < 99) return 50;       // 5%
+  return 80;                        // 1%
 }
 
 // ==================== VÉRIFICATION DES COMBINÉS ====================
@@ -767,6 +813,99 @@ client.on('messageCreate', async (message) => {
 
     message.reply({ embeds: [embed], components: [row] });
   }
+
+  if (command === '!roulette' || command === '!spin' || command === '!roue') {
+  // Vérifier si l'utilisateur peut tourner aujourd'hui
+  const canSpin = await canSpinToday(message.author.id);
+  
+  if (!canSpin) {
+    const spinData = await DailySpin.findOne({ userId: message.author.id });
+    const nextSpin = new Date(spinData.lastSpin);
+    nextSpin.setDate(nextSpin.getDate() + 1);
+    nextSpin.setHours(0, 0, 0, 0);
+    
+    const hoursLeft = Math.ceil((nextSpin - Date.now()) / (1000 * 60 * 60));
+    
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#FF6B6B')
+          .setTitle('🎰 Roulette Quotidienne')
+          .setDescription(`❌ Vous avez déjà tourné aujourd'hui !`)
+          .addFields({
+            name: '⏰ Prochaine rotation disponible',
+            value: `Dans **${hoursLeft}h** environ\n<t:${Math.floor(nextSpin.getTime() / 1000)}:R>`
+          })
+          .setFooter({ text: 'Revenez demain pour retenter votre chance !' })
+      ]
+    });
+  }
+  
+  // Animation de la roulette
+  const loadingEmbed = new EmbedBuilder()
+    .setColor('#FFA500')
+    .setTitle('🎰 Roulette Quotidienne')
+    .setDescription('🎲 **La roue tourne...**\n\n```\n🔄 En cours...\n```')
+    .setFooter({ text: 'Bonne chance !' });
+  
+  const loadingMsg = await message.reply({ embeds: [loadingEmbed] });
+  
+  // Attendre 2 secondes pour l'effet de suspense
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  // Tourner la roulette
+  const reward = spinRoulette();
+  
+  // Créditer l'utilisateur
+  const user = await getUser(message.author.id);
+  user.balance += reward;
+  await user.save();
+  
+  // Enregistrer le spin
+  await updateLastSpin(message.author.id);
+  
+  // Déterminer la couleur selon la récompense
+  let embedColor = '#A8E6CF'; // Vert clair par défaut
+  let emojiReward = '💰';
+  
+  if (reward >= 50) {
+    embedColor = '#FFD700'; // Or
+    emojiReward = '🎊';
+  } else if (reward >= 20) {
+    embedColor = '#FF69B4'; // Rose
+    emojiReward = '✨';
+  } else if (reward >= 10) {
+    embedColor = '#87CEEB'; // Bleu ciel
+    emojiReward = '💎';
+  }
+  
+  // Message de résultat
+  const resultEmbed = new EmbedBuilder()
+    .setColor(embedColor)
+    .setTitle('🎰 Roulette Quotidienne - Résultat !')
+    .setDescription(
+      `${emojiReward} **Félicitations <@${message.author.id}> !** ${emojiReward}\n\n` +
+      `Vous avez gagné **${reward}€** !\n\n` +
+      `💳 **Nouveau solde :** ${user.balance}€`
+    )
+    .addFields({
+      name: '📊 Probabilités',
+      value: 
+        '• 1€ (30%)\n' +
+        '• 5€ (25%)\n' +
+        '• 8€ (15%)\n' +
+        '• 10€ (10%)\n' +
+        '• 20€ (8%)\n' +
+        '• 30€ (6%)\n' +
+        '• 50€ (5%)\n' +
+        '• 80€ (1%) 🌟',
+      inline: false
+    })
+    .setFooter({ text: 'Revenez demain pour retourner la roue !' })
+    .setTimestamp();
+  
+  await loadingMsg.edit({ embeds: [resultEmbed] });
+}
 
   if (command === '!profil' || command === '!profile' || command === '!stats') {
     const targetUser = message.mentions.users.first() || message.author;
