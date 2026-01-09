@@ -488,9 +488,14 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
 
-    if (action === 'sor') {
+if (action === 'sor') {
   const subaction = params[0]; // 'continue' ou 'cashout'
   const userId = params[1];
+
+  console.log('🔍 DEBUG SOR BUTTON');
+  console.log('interaction.user.id:', interaction.user.id);
+  console.log('userId from button:', userId);
+  console.log('Match?', interaction.user.id === userId);
 
   // Vérifier que c'est bien le joueur
   if (interaction.user.id !== userId) {
@@ -507,6 +512,14 @@ client.on('interactionCreate', async (interaction) => {
 
   // ✅ ENCAISSER
   if (subaction === 'cashout') {
+    // ⭐ EMPÊCHER L'ENCAISSEMENT AU TOUR 1
+    if (game.round === 1) {
+      return interaction.reply({ 
+        content: '❌ Vous devez d\'abord risquer au moins 1 tour ! Impossible d\'encaisser au tour 1.', 
+        ephemeral: true 
+      });
+    }
+
     const roundData = multipliers[game.round - 1];
     const winnings = Math.floor(game.stake * roundData.multiplier);
     const profit = winnings - game.stake;
@@ -648,6 +661,7 @@ client.on('interactionCreate', async (interaction) => {
     const nextRoundData = multipliers[game.round - 1];
     const nextEmbed = createSafeOrRiskEmbed(game, nextRoundData);
 
+    // ⭐ À partir du tour 2, on peut encaisser OU continuer
     const nextRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -1402,18 +1416,14 @@ client.on('messageCreate', async (message) => {
   const roundData = multipliers[0]; // Tour 1
   const embed = createSafeOrRiskEmbed(game, roundData);
 
+ // Au tour 1, on ne peut QUE risquer (pas d'encaissement possible)
   const row = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder()
         .setCustomId(`sor_continue_${message.author.id}`)
         .setLabel(`🎲 RISQUER (${roundData.winChance}% chance)`)
         .setStyle(ButtonStyle.Danger)
-        .setEmoji('🎲'),
-      new ButtonBuilder()
-        .setCustomId(`sor_cashout_${message.author.id}`)
-        .setLabel(`✅ ENCAISSER ${Math.floor(amount * roundData.multiplier)}€`)
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('💰')
+        .setEmoji('🎲')
     );
 
   const gameMessage = await message.reply({ embeds: [embed], components: [row] });
