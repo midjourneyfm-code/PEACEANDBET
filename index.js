@@ -73,9 +73,10 @@ const combiSchema = new mongoose.Schema({
   totalOdds: Number,
   totalStake: Number,
   potentialWin: Number,
-  status: { type: String, default: 'pending' }, // pending, confirmed, won, lost, cancelled
+  status: { type: String, default: 'pending' },
   createdAt: { type: Date, default: Date.now },
-  resolvedBets: { type: Number, default: 0 }
+  resolvedBets: { type: Number, default: 0 },
+  processedBets: [String] // ⭐ AJOUTEZ CETTE LIGNE
 });
 
 const Combi = mongoose.model('Combi', combiSchema);
@@ -187,16 +188,42 @@ async function checkCombisForBet(messageId, winningOptions) {
 
     console.log(`🔍 ${combis.length} combiné(s) affecté(s) par le pari ${messageId}`);
 
-    const combiNotifications = []; // Pour stocker les notifications
+    const combiNotifications = [];
 
     for (const combi of combis) {
+      console.log(`\n📊 COMBI ${combi.combiId} - État AVANT traitement:`);
+      console.log(`   - resolvedBets: ${combi.resolvedBets}/${combi.bets.length}`);
+      console.log(`   - status: ${combi.status}`);
+      
       // Vérifier si ce pari était gagnant dans le combiné
       const betInCombi = combi.bets.find(b => b.messageId === messageId);
+      
+      if (!betInCombi) {
+        console.log(`⚠️ Pari ${messageId} introuvable dans le combiné ${combi.combiId}`);
+        continue;
+      }
+      
+      // ⭐ VÉRIFIER SI CE PARI A DÉJÀ ÉTÉ COMPTÉ
+      const alreadyProcessedBets = combi.processedBets || [];
+      if (alreadyProcessedBets.includes(messageId)) {
+        console.log(`⚠️ Pari ${messageId} déjà traité pour ce combiné, skip`);
+        continue;
+      }
+      
       const isWinningBet = winningOptions.includes(betInCombi.optionIndex);
+      console.log(`   - Option pariée: ${betInCombi.optionIndex} (${betInCombi.optionName})`);
+      console.log(`   - Options gagnantes: [${winningOptions.join(', ')}]`);
+      console.log(`   - Est gagnant? ${isWinningBet ? '✅' : '❌'}`);
 
       if (!isWinningBet) {
         // 🔴 UN PARI PERDU = COMBINÉ PERDU
+        console.log(`❌ COMBINÉ PERDU pour ${combi.username}`);
         combi.status = 'lost';
+        
+        // Marquer ce pari comme traité
+        if (!combi.processedBets) combi.processedBets = [];
+        combi.processedBets.push(messageId);
+        
         await combi.save();
 
         const user = await getUser(combi.userId);
@@ -204,7 +231,6 @@ async function checkCombisForBet(messageId, winningOptions) {
         user.stats.lostBets++;
         await user.save();
 
-        // ⭐ NOTIFICATION PARI PERDU
         combiNotifications.push({
           userId: combi.userId,
           username: combi.username,
@@ -215,15 +241,22 @@ async function checkCombisForBet(messageId, winningOptions) {
           odds: combi.totalOdds
         });
 
-        console.log(`❌ Combiné ${combi.combiId} perdu pour ${combi.username}`);
         continue;
       }
 
       // ✅ Ce pari était gagnant - MAINTENANT on incrémente
       combi.resolvedBets++;
-      console.log(`✅ Pari gagnant dans le combiné de ${combi.username} (${combi.resolvedBets}/${combi.bets.length})`);
+      
+      // Marquer ce pari comme traité
+      if (!combi.processedBets) combi.processedBets = [];
+      combi.processedBets.push(messageId);
+      
+      console.log(`✅ Pari gagnant ! Nouvelle progression: ${combi.resolvedBets}/${combi.bets.length}`);
 
+      // ⭐ VÉRIFICATION STRICTE : Est-ce vraiment le dernier pari ?
       if (combi.resolvedBets === combi.bets.length) {
+        console.log(`🎉 TOUS LES PARIS VALIDÉS ET GAGNANTS !`);
+        
         // 🎉 TOUS LES PARIS GAGNÉS !
         combi.status = 'won';
         await combi.save();
@@ -261,6 +294,8 @@ async function checkCombisForBet(messageId, winningOptions) {
 
         console.log(`🎰 Combiné gagnant pour ${combi.username} : ${combi.potentialWin}€`);
       } else {
+        console.log(`⏳ Combiné en progression (${combi.resolvedBets}/${combi.bets.length})`);
+        
         // ⭐ NOTIFICATION PROGRESSION
         combiNotifications.push({
           userId: combi.userId,
@@ -279,7 +314,6 @@ async function checkCombisForBet(messageId, winningOptions) {
       }
     }
 
-    // Retourner les notifications pour les afficher dans les résultats
     return combiNotifications;
   } catch (error) {
     console.error('❌ Erreur vérification combinés:', error);
