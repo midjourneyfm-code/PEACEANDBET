@@ -428,7 +428,7 @@ client.on('interactionCreate', async (interaction) => {
         const updatedBet = await Bet.findOne({ messageId: betId });
         const bettorsCount = Object.keys(updatedBet.bettors).length;
         
-        const fields = betMessage.embeds[0].fields.filter(f => !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
+        const fields = betMessage.embeds[0].fields.filter(f => !['💰 Comment parier ?', '📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name));
         fields.push(
           { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
           { name: '📈 Statut', value: bet.status === 'open' ? '🟢 En cours' : '🔒 Clôturé', inline: true },
