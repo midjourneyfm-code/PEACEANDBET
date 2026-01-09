@@ -449,90 +449,6 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  if (action === 'combi') {
-  const subaction = params[0];
-  const userId = params[1];
-
-  // Vérifier que c'est bien l'utilisateur qui a créé le combiné
-  if (interaction.user.id !== userId) {
-    return interaction.reply({ content: '❌ Ce combiné n\'est pas le vôtre !', ephemeral: true });
-  }
-
-  if (subaction === 'cancel') {
-    // Annuler le combiné
-    tempCombis.delete(userId);
-    
-    const cancelEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-      .setColor('#808080')
-      .setTitle('🗑️ Combiné Annulé')
-      .setDescription('Vous avez annulé la création du combiné.');
-
-    await interaction.update({ embeds: [cancelEmbed], components: [] });
-    return;
-  }
-
-  if (subaction === 'confirm') {
-    // Récupérer les données temporaires
-    const basket = tempCombis.get(userId);
-
-    if (!basket) {
-      return interaction.reply({ content: '❌ Combiné expiré. Veuillez recréer votre combiné.', ephemeral: true });
-    }
-
-    // Vérifier le solde à nouveau
-    const user = await getUser(userId);
-    if (user.balance < basket.totalStake) {
-      tempCombis.delete(userId);
-      return interaction.reply({ 
-        content: `❌ Solde insuffisant. Vous avez ${user.balance}€, mais le combiné coûte ${basket.totalStake}€.`, 
-        ephemeral: true 
-      });
-    }
-
-    // Déduire le solde
-    user.balance -= basket.totalStake;
-    await user.save();
-
-    // Créer le combiné dans la DB
-    const combiId = `combi_${userId}_${Date.now()}`;
-
-    const newCombi = new Combi({
-      combiId,
-      userId: userId,
-      username: interaction.user.tag,
-      bets: basket.bets,
-      totalOdds: basket.totalOdds,
-      totalStake: basket.totalStake,
-      potentialWin: basket.potentialWin,
-      status: 'confirmed',
-      resolvedBets: 0
-    });
-    await newCombi.save();
-
-    // Supprimer le panier temporaire
-    tempCombis.delete(userId);
-
-    // Confirmation
-    const successEmbed = new EmbedBuilder()
-      .setColor('#00FF00')
-      .setTitle('✅ Combiné Créé !')
-      .setDescription(`Votre combiné de **${basket.bets.length} matchs** a été enregistré avec succès.`)
-      .addFields(
-        { name: '📊 Cote totale', value: `${basket.totalOdds.toFixed(2)}x`, inline: true },
-        { name: '💰 Mise', value: `${basket.totalStake}€`, inline: true },
-        { name: '🎁 Gain potentiel', value: `${basket.potentialWin}€`, inline: true },
-        { name: '🆔 ID du combiné', value: `\`${combiId}\`` },
-        { name: '💳 Nouveau solde', value: `${user.balance}€` }
-      )
-      .setFooter({ text: 'Bonne chance ! Utilisez !mes-combis pour suivre vos combinés' })
-      .setTimestamp();
-
-    await interaction.update({ embeds: [successEmbed], components: [] });
-
-    console.log(`✅ Combiné créé : ${combiId} par ${interaction.user.tag} - ${basket.bets.length} paris`);
-  }
-}
-
   if (interaction.isModalSubmit()) {
     const [action, subaction, betId, optionIndex] = interaction.customId.split('_');
 
@@ -2083,6 +1999,90 @@ if (action === 'validate') {
   
     console.log(`✅ Validation terminée - ${winners.length} gagnants, ${totalDistributed}€ distribués`);
   }
+
+    if (action === 'combi') {
+  const subaction = params[0];
+  const userId = params[1];
+
+  // Vérifier que c'est bien l'utilisateur qui a créé le combiné
+  if (interaction.user.id !== userId) {
+    return interaction.reply({ content: '❌ Ce combiné n\'est pas le vôtre !', ephemeral: true });
+  }
+
+  if (subaction === 'cancel') {
+    // Annuler le combiné
+    tempCombis.delete(userId);
+    
+    const cancelEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+      .setColor('#808080')
+      .setTitle('🗑️ Combiné Annulé')
+      .setDescription('Vous avez annulé la création du combiné.');
+
+    await interaction.update({ embeds: [cancelEmbed], components: [] });
+    return;
+  }
+
+  if (subaction === 'confirm') {
+    // Récupérer les données temporaires
+    const basket = tempCombis.get(userId);
+
+    if (!basket) {
+      return interaction.reply({ content: '❌ Combiné expiré. Veuillez recréer votre combiné.', ephemeral: true });
+    }
+
+    // Vérifier le solde à nouveau
+    const user = await getUser(userId);
+    if (user.balance < basket.totalStake) {
+      tempCombis.delete(userId);
+      return interaction.reply({ 
+        content: `❌ Solde insuffisant. Vous avez ${user.balance}€, mais le combiné coûte ${basket.totalStake}€.`, 
+        ephemeral: true 
+      });
+    }
+
+    // Déduire le solde
+    user.balance -= basket.totalStake;
+    await user.save();
+
+    // Créer le combiné dans la DB
+    const combiId = `combi_${userId}_${Date.now()}`;
+
+    const newCombi = new Combi({
+      combiId,
+      userId: userId,
+      username: interaction.user.tag,
+      bets: basket.bets,
+      totalOdds: basket.totalOdds,
+      totalStake: basket.totalStake,
+      potentialWin: basket.potentialWin,
+      status: 'confirmed',
+      resolvedBets: 0
+    });
+    await newCombi.save();
+
+    // Supprimer le panier temporaire
+    tempCombis.delete(userId);
+
+    // Confirmation
+    const successEmbed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ Combiné Créé !')
+      .setDescription(`Votre combiné de **${basket.bets.length} matchs** a été enregistré avec succès.`)
+      .addFields(
+        { name: '📊 Cote totale', value: `${basket.totalOdds.toFixed(2)}x`, inline: true },
+        { name: '💰 Mise', value: `${basket.totalStake}€`, inline: true },
+        { name: '🎁 Gain potentiel', value: `${basket.potentialWin}€`, inline: true },
+        { name: '🆔 ID du combiné', value: `\`${combiId}\`` },
+        { name: '💳 Nouveau solde', value: `${user.balance}€` }
+      )
+      .setFooter({ text: 'Bonne chance ! Utilisez !mes-combis pour suivre vos combinés' })
+      .setTimestamp();
+
+    await interaction.update({ embeds: [successEmbed], components: [] });
+
+    console.log(`✅ Combiné créé : ${combiId} par ${interaction.user.tag} - ${basket.bets.length} paris`);
+  }
+}
 });
 
 client.on('error', console.error);
