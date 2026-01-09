@@ -2635,6 +2635,25 @@ if (command === '!aide' || command === '!help') {
         name: '!don @user <montant>', 
         value: 'Faire un don à un autre joueur\n📌 Ex : `!don @Jean 50`\n🔢 Alias : `!give`'
       },
+
+      // ========== SECTION MINI-JEUX ==========
+      { name: '\u200b', value: '**🎮 MINI-JEUX**', inline: false },
+      { 
+        name: '!safe-or-risk [montant]', 
+        value: '🎲 **Jeu SAFE OR RISK** - Monte les tours ou encaisse !\n\n' +
+               '**Règles :**\n' +
+               '• Chaque tour = multiplicateur plus élevé\n' +
+               '• À chaque tour : ENCAISSER ou RISQUER\n' +
+               '• Plus tu montes, moins tu as de chance de réussir\n' +
+               '• Si tu exploses : tu perds TOUT\n' +
+               '• 10 tours max = JACKPOT x30 !\n\n' +
+               '📌 Exemple : `!safe-or-risk 100`\n' +
+               '🔢 Alias : `!sor`, `!risk`'
+      },
+      {
+                name: '!roulette', 
+                value: '🎰 Tourner la roue quotidienne pour gagner de l\'argent\n📢 Alias : `!spin`, `!roue`\n⏰ Une fois par jour'
+      },
       
       // ========== SECTION ADMIN (RÉDUITE) ==========
       { name: '\u200b', value: `**⚙️ ADMIN** (Rôle : **${BETTING_CREATOR_ROLE}**)`, inline: false },
