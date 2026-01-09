@@ -2118,3 +2118,4 @@ setInterval(() => {
     console.log('⚠️ Erreur ping');
   }
 }, 5 * 60 * 1000);
+});
