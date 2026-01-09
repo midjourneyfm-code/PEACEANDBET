@@ -190,9 +190,6 @@ async function checkCombisForBet(messageId, winningOptions) {
     const combiNotifications = []; // Pour stocker les notifications
 
     for (const combi of combis) {
-      // Incrémenter le compteur de paris résolus
-      combi.resolvedBets++;
-
       // Vérifier si ce pari était gagnant dans le combiné
       const betInCombi = combi.bets.find(b => b.messageId === messageId);
       const isWinningBet = winningOptions.includes(betInCombi.optionIndex);
@@ -222,7 +219,8 @@ async function checkCombisForBet(messageId, winningOptions) {
         continue;
       }
 
-      // ✅ Ce pari était gagnant
+      // ✅ Ce pari était gagnant - MAINTENANT on incrémente
+      combi.resolvedBets++;
       console.log(`✅ Pari gagnant dans le combiné de ${combi.username} (${combi.resolvedBets}/${combi.bets.length})`);
 
       if (combi.resolvedBets === combi.bets.length) {
