@@ -1239,56 +1239,35 @@ if (command === '!annuler-tout' || command === '!cancelall') {
     let closingTime = null;
     let closingTimestamp = null;
     
-          if (closingTimeStr) {
-      const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
-      const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
+         if (closingTimeStr) {
+  const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
+  const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
+  
+  if (hoursMatch) {
+    const targetHour = parseInt(hoursMatch[1]);
+    const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+    
+    if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
+      // ⭐ SOLUTION SIMPLE : Date locale directe
+      const closingDate = new Date();
+      closingDate.setHours(targetHour, targetMinute, 0, 0);
       
-      if (hoursMatch) {
-        const targetHour = parseInt(hoursMatch[1]);
-        const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
-        
-        if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-          // ⭐ INTL pour Paris
-          const now = new Date();
-          
-          const parisFormatter = new Intl.DateTimeFormat('fr-FR', {
-            timeZone: 'Europe/Paris',
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            hour12: false
-          });
-          
-          const parisNowParts = parisFormatter.formatToParts(now);
-          const parisNowObj = {};
-          parisNowParts.forEach(part => {
-            if (part.type !== 'literal') parisNowObj[part.type] = parseInt(part.value);
-          });
-          
-          const closingDate = new Date(
-            parisNowObj.year,
-            parisNowObj.month - 1,
-            parisNowObj.day,
-            targetHour,
-            targetMinute, 0, 0
-          );
-          
-          const offsetMinutes = closingDate.getTimezoneOffset();
-          closingDate.setMinutes(closingDate.getMinutes() + offsetMinutes + 60);
-          
-          if (closingDate.getTime() <= now.getTime()) {
-            closingDate.setDate(closingDate.getDate() + 1);
-          }
-          
-          closingTimestamp = closingDate.getTime();
-          closingTime = closingDate;
-          
-          console.log(`🕐 Heure : ${targetHour}h${targetMinute.toString().padStart(2, '0')}`);
-          console.log(`📅 Date : ${closingTime.toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}`);
-        } else {
-          return message.reply('❌ Heure invalide. Format: `21h30`');
-        }
+      // Si l'heure est déjà passée aujourd'hui, passer à demain
+      if (closingDate.getTime() <= Date.now()) {
+        closingDate.setDate(closingDate.getDate() + 1);
       }
+      
+      closingTimestamp = closingDate.getTime();
+      closingTime = closingDate;
+      
+      console.log(`🕐 Heure demandée : ${targetHour}h${targetMinute.toString().padStart(2, '0')}`);
+      console.log(`📅 Clôture prévue : ${closingDate.toLocaleString('fr-FR')}`);
+      console.log(`⏰ Dans ${Math.floor((closingTimestamp - Date.now()) / 60000)} minutes`);
+    } else {
+      return message.reply('❌ Heure invalide. Format: `21h30`');
     }
+  }
+}
     
     const optionsText = options.map((opt, i) => 
       `**${i + 1}.** ${opt.name} — Cote: **${opt.odds}x**`
@@ -1877,7 +1856,16 @@ if (hoursMatch) {
     if (bet.status !== 'open') {
       return message.reply(`❌ Le pari \`${betMessageId}\` est **fermé ou clôturé**.\nQuestion : "${bet.question}"`);
     }
-
+    // ⭐ VÉRIFIER SI C'EST UN PARI BOOSTÉ
+if (bet.isBoosted) {
+  return message.reply(
+    `❌ **Impossible d'ajouter ce pari au combiné !**\n\n` +
+    `Le pari "${bet.question}" est un **PARI BOOSTÉ** 🔥\n` +
+    `Les paris boostés ne peuvent pas être combinés.\n\n` +
+    `💡 Pariez directement dessus avec les boutons.`
+  );
+}
+    
     const optionIndex = optionNum - 1;
     if (optionIndex < 0 || optionIndex >= bet.options.length) {
       return message.reply(
