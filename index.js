@@ -1100,34 +1100,38 @@ if (command === '!annuler-tout' || command === '!cancelall') {
     let closingTime = null;
     let closingTimestamp = null;
     
-    if (closingTimeStr) {
+       if (closingTimeStr) {
       const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
       const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
       
-if (hoursMatch) {
-  const targetHour = parseInt(hoursMatch[1]);
-  const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
-  
-  if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-    // ⭐ CRÉER LA DATE DIRECTEMENT EN UTC+1
-    const now = new Date();
-    
-    // ⭐ Obtenir l'heure actuelle à Paris
-    const parisNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-    
-    // ⭐ Créer la date de clôture à Paris
-    const closingDate = new Date();
-    closingDate.setHours(targetHour, targetMinute, 0, 0);
-    
-    // ⭐ Si l'heure de clôture est passée aujourd'hui, passer à demain
-    if (closingDate.getTime() <= now.getTime()) {
-      closingDate.setDate(closingDate.getDate() + 1);
-    }
-    
-    closingTimestamp = closingDate.getTime();
-    closingTime = closingDate;
+      if (hoursMatch) {
+        const targetHour = parseInt(hoursMatch[1]);
+        const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+        
+        if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
+          // ⭐ CRÉER EN HEURE DE PARIS
+          const now = new Date();
+          
+          // Obtenir l'heure actuelle à Paris
+          const parisNowStr = now.toLocaleString('en-US', { timeZone: 'Europe/Paris' });
+          const parisNow = new Date(parisNowStr);
+          
+          // Créer la date de clôture à Paris
+          const closingDateStr = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
+          closingDateStr.setHours(targetHour, targetMinute, 0, 0);
+          
+          // Si déjà passée, passer à demain
+          if (closingDateStr <= parisNow) {
+            closingDateStr.setDate(closingDateStr.getDate() + 1);
+          }
+          
+          closingTimestamp = closingDateStr.getTime();
+          closingTime = new Date(closingTimestamp);
+          
+          console.log(`🕐 Clôture : ${targetHour}h${targetMinute.toString().padStart(2, '0')}`);
+          console.log(`📅 Date Paris : ${closingTime.toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}`);
         } else {
-          return message.reply('❌ Heure invalide. Format: `21h30` (heure entre 0 et 23, minutes entre 0 et 59)');
+          return message.reply('❌ Heure invalide. Format: `21h30`');
         }
       }
     }
@@ -1893,20 +1897,20 @@ if (command === '!mes-combis' || command === '!mc') {
           // ✅ Combiné gagné = tous les paris sont gagnants
           betStatusEmoji = '✅';
         } else if (combi.status === 'lost') {
-          // ❌ Combiné perdu = vérifier si CE pari spécifique a fait perdre le combiné
-          if (processedBets.includes(b.messageId)) {
-            // Ce pari a été traité, vérifier s'il était gagnant
-            const betData = await Bet.findOne({ messageId: b.messageId });
-            if (betData && betData.status === 'resolved' && betData.winningOptions && Array.isArray(betData.winningOptions)) {
-              // Si ce pari est résolu, vérifier si l'option du combiné était gagnante
-              const wasWinning = betData.winningOptions.includes(b.optionIndex);
-              betStatusEmoji = wasWinning ? '✅' : '❌';
-            } else {
-              // Pari pas encore résolu ou pas de winningOptions
-              betStatusEmoji = '⏳';
-            }
+          // ❌ Combiné perdu
+          
+          // ⭐ TOUJOURS VÉRIFIER DANS LA DB
+          const betData = await Bet.findOne({ messageId: b.messageId });
+          
+          if (betData && betData.status === 'resolved' && betData.winningOptions && Array.isArray(betData.winningOptions)) {
+            // Pari résolu : vérifier si gagnant ou perdant
+            const wasWinning = betData.winningOptions.includes(b.optionIndex);
+            betStatusEmoji = wasWinning ? '✅' : '❌';
+          } else if (betData && betData.status === 'resolved') {
+            // Résolu mais pas de winningOptions (annulé ?)
+            betStatusEmoji = '🚫';
           } else {
-            // Pari pas encore traité
+            // Pas encore résolu
             betStatusEmoji = '⏳';
           }
         } else if (combi.status === 'confirmed') {
