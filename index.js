@@ -678,9 +678,9 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ 
         content: `❌ Le pari "${detail.betQuestion}" a été clôturé entre-temps. Veuillez recréer votre combiné.`, 
         ephemeral: true 
-      });
     }
   }
+});
 
   const potentialWin = Math.floor(amount * tempCombo.totalOdds);
   const profit = potentialWin - amount;
@@ -721,8 +721,9 @@ client.on('interactionCreate', async (interaction) => {
     .setTimestamp();
 
   await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+    }  
   }
-};
+});
 
 // ==================== COMMANDES ====================
 
