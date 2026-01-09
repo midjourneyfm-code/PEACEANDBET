@@ -180,13 +180,13 @@ async function sendReminder(messageId) {
 
 async function checkCombisForBet(messageId, winningOptions) {
   try {
-    // Trouver tous les combinés confirmés qui contiennent ce pari
+    // ⭐ MODIFICATION : Ne chercher QUE les combinés "confirmed" (pas les "lost")
     const combis = await Combi.find({ 
-      status: 'confirmed',
+      status: 'confirmed', // ✅ Ignore automatiquement les combinés déjà perdus
       'bets.messageId': messageId
     });
 
-    console.log(`🔍 ${combis.length} combiné(s) affecté(s) par le pari ${messageId}`);
+    console.log(`🔍 ${combis.length} combiné(s) actif(s) affecté(s) par le pari ${messageId}`);
 
     const combiNotifications = [];
 
@@ -231,6 +231,7 @@ async function checkCombisForBet(messageId, winningOptions) {
         user.stats.lostBets++;
         await user.save();
 
+        // ⭐ NOTIFICATION PARI PERDU (sera affichée dans les résultats)
         combiNotifications.push({
           userId: combi.userId,
           username: combi.username,
@@ -1789,7 +1790,7 @@ if (command === '!mes-combis' || command === '!mc') {
     const combis = await Combi.find({ userId: message.author.id }).sort({ createdAt: -1 }).limit(10);
 
     if (combis.length === 0) {
-      return message.reply('📭 Vous n\'avez aucun combiné enregistré.');
+      return message.reply('🔭 Vous n\'avez aucun combiné enregistré.');
     }
 
     const embed = new EmbedBuilder()
@@ -1816,14 +1817,30 @@ if (command === '!mes-combis' || command === '!mc') {
       fieldValue += `**Mise :** ${combi.totalStake}€ | **Cote :** ${combi.totalOdds.toFixed(2)}x | **Gain potentiel :** ${combi.potentialWin}€\n`;
       fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length} matchs résolus\n\n`;
       
-      // ⭐ AJOUTER LES DÉTAILS DES PARIS
+      // ⭐ DÉTAILS DES PARIS AVEC STATUT CORRECT
       fieldValue += `**📋 Paris du combiné :**\n`;
-      combi.bets.forEach((b, i) => {
-        const betStatus = combi.resolvedBets > i ? '✅' : '⏳';
-        fieldValue += `${i + 1}. ${betStatus} **${b.question}**\n`;
+      
+      // ⭐ Récupérer le statut réel de chaque pari
+      for (let i = 0; i < combi.bets.length; i++) {
+        const b = combi.bets[i];
+        
+        let betStatusEmoji;
+        if (combi.status === 'lost') {
+          // Si le combiné est perdu, afficher ❌ pour tous les paris
+          betStatusEmoji = '❌';
+        } else if (combi.status === 'won') {
+          // Si le combiné est gagné, tous les paris sont ✅
+          betStatusEmoji = '✅';
+        } else {
+          // Combiné en cours : vérifier si ce pari spécifique a été résolu
+          const processedBets = combi.processedBets || [];
+          betStatusEmoji = processedBets.includes(b.messageId) ? '✅' : '⏳';
+        }
+        
+        fieldValue += `${i + 1}. ${betStatusEmoji} **${b.question}**\n`;
         fieldValue += `   ➜ Sélection : ${b.optionName} (${b.odds}x)\n`;
         fieldValue += `   ➜ Mise : ${b.amount}€ | ID: \`${b.messageId}\`\n`;
-      });
+      }
       
       fieldValue += `\n**🆔 ID :** \`${combi.combiId}\``;
 
