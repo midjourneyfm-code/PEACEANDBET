@@ -1949,6 +1949,12 @@ if (action === 'validate') {
 
     // Traiter tous les parieurs
     for (const [userId, betData] of Object.entries(bettorsObj)) {
+      // ⭐ IGNORER LES PARIEURS DE COMBINÉ
+      if (betData.isCombi) {
+        console.log(`⏭️ ${userId} fait partie d'un combiné, ignoré`);
+        continue;
+      }
+      
       const user = await getUser(userId);
       user.stats.totalBets++;
       
@@ -2080,6 +2086,34 @@ if (action === 'validate') {
       resolvedBets: 0
     });
     await newCombi.save();
+    
+// ⭐ ENREGISTRER L'UTILISATEUR COMME PARIEUR SUR CHAQUE PARI
+    for (const bet of basket.bets) {
+      try {
+        await Bet.findOneAndUpdate(
+          { 
+            messageId: bet.messageId,
+            [`bettors.${userId}`]: { $exists: false }
+          },
+          { 
+            $set: { 
+              [`bettors.${userId}`]: {
+                option: bet.optionIndex,
+                amount: bet.amount,
+                username: interaction.user.tag,
+                odds: bet.odds,
+                isCombi: true, // ⭐ Marqueur pour les combinés
+                combiId: combiId
+              }
+            },
+            $inc: { totalPool: bet.amount }
+          }
+        );
+        console.log(`✅ Ajouté ${interaction.user.tag} sur pari ${bet.messageId}`);
+      } catch (error) {
+        console.error(`❌ Erreur:`, error);
+      }
+    }
 
     // Supprimer le panier temporaire
     tempCombis.delete(userId);
