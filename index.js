@@ -1824,42 +1824,44 @@ if (command === '!mes-combis' || command === '!mc') {
       
       // ⭐ Récupérer le statut réel de chaque pari
       const processedBets = combi.processedBets || [];
+      
       for (let i = 0; i < combi.bets.length; i++) {
         const b = combi.bets[i];
         
         let betStatusEmoji;
-       if (combi.status === 'won') {
-    // ✅ Combiné gagné = tous les paris sont gagnants
-    betStatusEmoji = '✅';
-  } else if (combi.status === 'lost') {
-    // ❌ Combiné perdu = vérifier si CE pari spécifique a fait perdre le combiné
-    if (processedBets.includes(b.messageId)) {
-      // Ce pari a été traité, vérifier s'il était gagnant
-      const betData = await Bet.findOne({ messageId: b.messageId });
-      if (betData && betData.status === 'resolved' && betData.winningOptions) {
-        // Si ce pari est résolu, vérifier si l'option du combiné était gagnante
-        const wasWinning = betData.winningOptions.includes(b.optionIndex);
-        betStatusEmoji = wasWinning ? '✅' : '❌';
-      } else {
-        // Pari pas encore résolu
-        betStatusEmoji = '⏳';
+        
+        if (combi.status === 'won') {
+          // ✅ Combiné gagné = tous les paris sont gagnants
+          betStatusEmoji = '✅';
+        } else if (combi.status === 'lost') {
+          // ❌ Combiné perdu = vérifier si CE pari spécifique a fait perdre le combiné
+          if (processedBets.includes(b.messageId)) {
+            // Ce pari a été traité, vérifier s'il était gagnant
+            const betData = await Bet.findOne({ messageId: b.messageId });
+            if (betData && betData.status === 'resolved' && betData.winningOptions && Array.isArray(betData.winningOptions)) {
+              // Si ce pari est résolu, vérifier si l'option du combiné était gagnante
+              const wasWinning = betData.winningOptions.includes(b.optionIndex);
+              betStatusEmoji = wasWinning ? '✅' : '❌';
+            } else {
+              // Pari pas encore résolu ou pas de winningOptions
+              betStatusEmoji = '⏳';
+            }
+          } else {
+            // Pari pas encore traité
+            betStatusEmoji = '⏳';
+          }
+        } else if (combi.status === 'confirmed') {
+          // ⏳ Combiné en cours = vérifier si ce pari a été validé
+          betStatusEmoji = processedBets.includes(b.messageId) ? '✅' : '⏳';
+        } else {
+          // Cancelled
+          betStatusEmoji = '🚫';
+        }
+        
+        fieldValue += `${i + 1}. ${betStatusEmoji} **${b.question}**\n`;
+        fieldValue += `   ➜ Sélection : ${b.optionName} (${b.odds}x)\n`;
+        fieldValue += `   ➜ Mise : ${b.amount}€ | ID: \`${b.messageId}\`\n`;
       }
-    } else {
-      // Pari pas encore traité
-      betStatusEmoji = '⏳';
-    }
-  } else if (combi.status === 'confirmed') {
-    // ⏳ Combiné en cours = vérifier si ce pari a été validé
-    betStatusEmoji = processedBets.includes(b.messageId) ? '✅' : '⏳';
-  } else {
-    // Cancelled
-    betStatusEmoji = '🚫';
-  }
-  
-  fieldValue += `${i + 1}. ${betStatusEmoji} **${b.question}**\n`;
-  fieldValue += `   ➜ Sélection : ${b.optionName} (${b.odds}x)\n`;
-  fieldValue += `   ➜ Mise : ${b.amount}€ | ID: \`${b.messageId}\`\n`;
-}
       
       fieldValue += `\n**🆔 ID :** \`${combi.combiId}\``;
 
@@ -2143,7 +2145,6 @@ if (action === 'validate') {
     }
     
     await interaction.reply(distributionText);
-    await checkCombisForBet(betId, winningOptions);
   
     console.log(`✅ Validation terminée - ${winners.length} gagnants, ${totalDistributed}€ distribués`);
   }
