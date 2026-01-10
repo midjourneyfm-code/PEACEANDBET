@@ -26,7 +26,22 @@ const userSchema = new mongoose.Schema({
     wonBets: { type: Number, default: 0 },
     lostBets: { type: Number, default: 0 }
   },
-  milestonesReached: { type: [Number], default: [] }, // ⭐ LIGNE AJOUTÉE
+  milestonesReached: { type: [Number], default: [] },
+  // ⭐ NOUVEAU : Système de winstreak
+  currentStreak: { type: Number, default: 0 },
+  bestStreak: { type: Number, default: 0 },
+  streakHistory: [{
+    streak: Number,
+    endedAt: Date,
+    bets: [{
+      question: String,
+      option: String,
+      amount: Number,
+      winnings: Number,
+      type: String, // 'simple' ou 'combi'
+      timestamp: Date
+    }]
+  }],
   history: [{
     betId: String,
     question: String,
@@ -209,6 +224,144 @@ async function closeBetAutomatically(messageId) {
     await msg.reply('🔒 **Les paris sont maintenant clôturés !** Le match est en cours. En attente de validation du résultat...');
   } catch (error) {
     console.error('Erreur clôture auto:', error);
+  }
+}
+
+async function handleWinstreak(user, channelId, betDetails) {
+  // betDetails = { question, option, amount, winnings, type: 'simple' ou 'combi' }
+  
+  const oldStreak = user.currentStreak;
+  user.currentStreak++;
+  
+  // Ajouter le pari à l'historique de streak actuelle
+  if (!user.streakHistory) user.streakHistory = [];
+  
+  // Trouver ou créer la streak en cours
+  let currentStreakRecord = user.streakHistory.find(s => s.streak === user.currentStreak && !s.endedAt);
+  if (!currentStreakRecord) {
+    currentStreakRecord = {
+      streak: user.currentStreak,
+      bets: []
+    };
+    user.streakHistory.push(currentStreakRecord);
+  }
+  
+  // Ajouter le pari à la streak
+  currentStreakRecord.bets.push({
+    question: betDetails.question,
+    option: betDetails.option,
+    amount: betDetails.amount,
+    winnings: betDetails.winnings,
+    type: betDetails.type,
+    timestamp: new Date()
+  });
+  
+  // Mettre à jour le record
+  if (user.currentStreak > user.bestStreak) {
+    user.bestStreak = user.currentStreak;
+  }
+  
+  let bonusAmount = 0;
+  let announcement = '';
+  
+  // 🔥 BONUS À PARTIR DE 3 VICTOIRES CONSÉCUTIVES
+  if (user.currentStreak >= 3) {
+    bonusAmount = 5;
+    user.balance += bonusAmount;
+    
+    const streakEmojis = {
+      3: '🔥',
+      5: '🔥🔥',
+      7: '🔥🔥🔥',
+      10: '⚡🔥',
+      15: '💎🔥',
+      20: '👑🔥'
+    };
+    
+    const emoji = streakEmojis[user.currentStreak] || (user.currentStreak >= 20 ? '👑🔥' : '🔥');
+    
+    try {
+      const channel = await client.channels.fetch(channelId);
+      
+      const streakEmbed = new EmbedBuilder()
+        .setColor('#FF6B00')
+        .setTitle(`${emoji} WINSTREAK EN COURS ! ${emoji}`)
+        .setDescription(
+          `**<@${user.userId}>** est en FEU avec **${user.currentStreak} victoires** consécutives !\n\n` +
+          `🎁 **BONUS WINSTREAK :** +${bonusAmount}€\n` +
+          `💰 **Nouveau solde :** ${user.balance}€`
+        )
+        .addFields(
+          { name: '📈 Streak actuelle', value: `${user.currentStreak} 🔥`, inline: true },
+          { name: '🏆 Meilleur record', value: `${user.bestStreak}`, inline: true },
+          { name: '💡 Astuce', value: 'Continue de gagner pour augmenter ton bonus !', inline: false }
+        )
+        .setFooter({ text: `${oldStreak} → ${user.currentStreak} | +${bonusAmount}€ bonus` })
+        .setTimestamp();
+      
+      await channel.send({ embeds: [streakEmbed] });
+      
+      console.log(`🔥 ${user.userId} winstreak ${user.currentStreak} (+${bonusAmount}€)`);
+    } catch (error) {
+      console.error('Erreur annonce winstreak:', error);
+    }
+  } else if (user.currentStreak === 2) {
+    // Annonce qu'il est à 1 victoire du bonus
+    try {
+      const channel = await client.channels.fetch(channelId);
+      await channel.send(
+        `🔥 **<@${user.userId}>** a **2 victoires** consécutives ! ` +
+        `Plus qu'**1 victoire** pour débloquer le **BONUS WINSTREAK** de 5€ par pari ! 🎁`
+      );
+    } catch (error) {
+      console.error('Erreur annonce streak 2:', error);
+    }
+  }
+  
+  await user.save();
+  return bonusAmount;
+}
+
+async function breakWinstreak(user, channelId) {
+  if (user.currentStreak === 0) return; // Pas de streak en cours
+  
+  const lostStreak = user.currentStreak;
+  
+  // Marquer la fin de la streak dans l'historique
+  if (user.streakHistory && user.streakHistory.length > 0) {
+    const lastStreak = user.streakHistory[user.streakHistory.length - 1];
+    if (!lastStreak.endedAt) {
+      lastStreak.endedAt = new Date();
+    }
+  }
+  
+  user.currentStreak = 0;
+  await user.save();
+  
+  // Annonce de perte de streak (seulement si >= 3)
+  if (lostStreak >= 3) {
+    try {
+      const channel = await client.channels.fetch(channelId);
+      
+      const breakEmbed = new EmbedBuilder()
+        .setColor('#808080')
+        .setTitle('💔 WINSTREAK TERMINÉE')
+        .setDescription(
+          `**<@${user.userId}>** a perdu sa série de **${lostStreak} victoires** consécutives.\n\n` +
+          `La prochaine fois sera la bonne ! 💪`
+        )
+        .addFields(
+          { name: '📉 Streak perdue', value: `${lostStreak} 🔥`, inline: true },
+          { name: '🏆 Meilleur record', value: `${user.bestStreak}`, inline: true }
+        )
+        .setTimestamp();
+      
+      await channel.send({ embeds: [breakEmbed] });
+      
+      console.log(`💔 ${user.userId} perd sa winstreak de ${lostStreak}`);
+    } catch (error) {
+      console.error('Erreur annonce break streak:', error);
+    }
   }
 }
 
@@ -402,6 +555,10 @@ if (!isWinningBet) {
   const user = await getUser(combi.userId);
   user.stats.totalBets++;
   user.stats.lostBets++;
+  const betRecord = await Bet.findOne({ messageId: messageId });
+if (betRecord) {
+  await breakWinstreak(user, betRecord.channelId);
+}
   
   // ⭐ AJOUTER L'HISTORIQUE
   user.history.push({
@@ -482,6 +639,16 @@ const user = await getUser(combi.userId);
 user.balance += combi.potentialWin;
 user.stats.totalBets++;
 user.stats.wonBets++;
+const betRecord = await Bet.findOne({ messageId: messageId });
+if (betRecord) {
+  const streakBonus = await handleWinstreak(user, betRecord.channelId, {
+    question: `Combiné ${combi.bets.length} matchs`,
+    option: `Cote ${combi.totalOdds.toFixed(2)}x`,
+    amount: combi.totalStake,
+    winnings: combi.potentialWin,
+    type: 'combi'
+  });
+}
 
 // ⭐ AJOUTER À L'HISTORIQUE
 user.history.push({
@@ -1440,7 +1607,10 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
   embed.addFields(
     { name: '🏆 Derniers paliers', value: milestonesText, inline: true },
     { name: '🎯 Prochain palier', value: `${nextMilestone} paris`, inline: true },
-    { name: '\u200b', value: '\u200b', inline: true }
+    { name: '\u200b', value: '\u200b', inline: true },
+     { name: '🔥 Winstreak actuelle', value: `${user.currentStreak}`, inline: true },
+  { name: '🏆 Meilleur record', value: `${user.bestStreak}`, inline: true },
+  { name: '💰 Bonus actif', value: user.currentStreak >= 3 ? '✅ +5€/victoire' : '❌', inline: true }
   );
 
   if (recentHistory.length > 0) {
@@ -1459,6 +1629,61 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
     }
     embed.addFields({ name: '📜 Historique Récent', value: historyText, inline: false });
   }
+
+  message.reply({ embeds: [embed] });
+}
+
+  if (command === '!streak-history' || command === '!sh') {
+  const user = await getUser(message.author.id);
+  
+  if (!user.streakHistory || user.streakHistory.length === 0) {
+    return message.reply('📊 Vous n\'avez aucun historique de winstreak.');
+  }
+
+  // Prendre les 5 dernières streaks terminées
+  const completedStreaks = user.streakHistory
+    .filter(s => s.endedAt)
+    .sort((a, b) => new Date(b.endedAt) - new Date(a.endedAt))
+    .slice(0, 5);
+
+  if (completedStreaks.length === 0) {
+    return message.reply('📊 Aucune winstreak terminée pour le moment.');
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle('📜 Votre Historique de Winstreaks')
+    .setDescription(`Vos ${completedStreaks.length} dernières séries de victoires :\n`)
+    .setTimestamp();
+
+  for (const streak of completedStreaks) {
+    const totalWinnings = streak.bets.reduce((sum, b) => sum + (b.winnings || 0), 0);
+    const totalStake = streak.bets.reduce((sum, b) => sum + (b.amount || 0), 0);
+    const profit = totalWinnings - totalStake;
+    const bonusEarned = streak.streak >= 3 ? (streak.streak - 2) * 5 : 0;
+
+    let fieldValue = `**Durée :** ${streak.streak} victoires 🔥\n`;
+    fieldValue += `**Gains totaux :** ${totalWinnings}€\n`;
+    fieldValue += `**Profit :** +${profit}€\n`;
+    if (bonusEarned > 0) {
+      fieldValue += `**Bonus streak :** +${bonusEarned}€ 🎁\n`;
+    }
+    fieldValue += `**Terminée le :** ${new Date(streak.endedAt).toLocaleDateString('fr-FR')}\n\n`;
+    
+    fieldValue += `**Paris gagnés :**\n`;
+    streak.bets.forEach((b, i) => {
+      const typeEmoji = b.type === 'combi' ? '🎰' : '💰';
+      fieldValue += `${i + 1}. ${typeEmoji} ${b.question} (${b.amount}€ → ${b.winnings}€)\n`;
+    });
+
+    embed.addFields({
+      name: `🔥 Série de ${streak.streak} victoires`,
+      value: fieldValue,
+      inline: false
+    });
+  }
+
+  embed.setFooter({ text: '💡 Votre record actuel : ' + user.bestStreak + ' victoires' });
 
   message.reply({ embeds: [embed] });
 }
@@ -1664,7 +1889,53 @@ try {
 
     message.reply({ embeds: [embed] });
   }
+  
+if (command === '!topstreak' || command === '!top-streak' || command === '!streaks') {
+  // Récupérer tous les utilisateurs avec leur meilleur streak
+  const allUsers = await User.find({
+    userId: { $regex: /^[0-9]{17,19}$/ },
+    bestStreak: { $gt: 0 }
+  }).sort({ bestStreak: -1 }).limit(10);
 
+  if (allUsers.length === 0) {
+    return message.reply('📊 Aucun record de winstreak enregistré pour le moment.');
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor('#FF6B00')
+    .setTitle('🔥 TOP 10 - Records de Winstreak')
+    .setDescription('Les meilleures séries de victoires consécutives !\n')
+    .setTimestamp();
+
+  let description = '';
+  
+  for (let i = 0; i < allUsers.length; i++) {
+    const user = allUsers[i];
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+    const currentStreakIndicator = user.currentStreak > 0 ? ` 🔥 (${user.currentStreak} en cours)` : '';
+    
+    description += `${medal} <@${user.userId}> — **${user.bestStreak} victoires**${currentStreakIndicator}\n`;
+  }
+
+  embed.setDescription(description);
+
+  // Afficher la streak actuelle du joueur qui demande
+  const requestingUser = await getUser(message.author.id);
+  
+  embed.addFields({
+    name: '📈 Votre Winstreak',
+    value: 
+      `**Actuelle :** ${requestingUser.currentStreak} 🔥\n` +
+      `**Record :** ${requestingUser.bestStreak}\n` +
+      `**Bonus actuel :** ${requestingUser.currentStreak >= 3 ? '+5€ par victoire ✅' : `Plus que ${3 - requestingUser.currentStreak} victoire(s) pour le bonus`}`,
+    inline: false
+  });
+
+  embed.setFooter({ text: '💡 Gagnez 3 paris d\'affilée pour débloquer +5€ par victoire !' });
+
+  message.reply({ embeds: [embed] });
+}
+  
 if (command === '!safe-or-risk' || command === '!sor' || command === '!risk') {
   const amount = parseInt(args[1]);
 
@@ -3355,13 +3626,22 @@ for (const [userId, betData] of Object.entries(bettorsObj)) {
   
   if (winningOptions.includes(betData.option)) {
     // GAGNANT
-    user.stats.wonBets++;
-    const odds = bet.initialOdds[betData.option];
-    const winnings = calculatePotentialWin(betData.amount, odds);
-    const profit = winnings - betData.amount;
-    
-    user.balance += winnings;
-    totalDistributed += winnings;
+user.stats.wonBets++;
+const odds = bet.initialOdds[betData.option];
+const winnings = calculatePotentialWin(betData.amount, odds);
+const profit = winnings - betData.amount;
+
+user.balance += winnings;
+totalDistributed += winnings;
+
+// ⭐ GESTION WINSTREAK POUR PARIS SIMPLES
+const streakBonus = await handleWinstreak(user, bet.channelId, {
+  question: bet.question,
+  option: bet.options[betData.option].name,
+  amount: betData.amount,
+  winnings: winnings,
+  type: 'simple'
+});
     
     simpleWinners.push({
       userId,
@@ -3388,6 +3668,7 @@ await handleMilestone(user, bet.channelId);
   } else {
     // PERDANT
     user.stats.lostBets++;
+    await breakWinstreak(user, bet.channelId);
     
     simpleLosers.push({
       userId,
