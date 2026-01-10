@@ -1840,14 +1840,14 @@ successEmbed.setFooter({ text: '🍀 Bonne chance ! Utilisez !mes-paris pour sui
 
 // ✅ ENVOYER EN MESSAGE PRIVÉ (DM) au lieu de reply public
 try {
-  await message.author.send({ embeds: [successEmbed] });
+  await interaction.user.send({ embeds: [successEmbed] });
   // Confirmer avec un petit message public qui sera supprimé
-  const confirmMsg = await message.reply('✅ Pari enregistré ! Vérifiez vos messages privés pour le récapitulatif.');
+  const confirmMsg = await interaction.reply('✅ Pari enregistré ! Vérifiez vos messages privés pour le récapitulatif.');
   setTimeout(() => confirmMsg.delete().catch(() => {}), 5000);
 } catch (error) {
   // Si les DM sont fermés, envoyer en ephemeral (mais on ne peut pas avec message.reply)
   // Donc on envoie juste un message court qui sera supprimé
-  const fallbackMsg = await message.reply({ embeds: [successEmbed] });
+  const fallbackMsg = await interaction.reply({ embeds: [successEmbed] });
   setTimeout(() => fallbackMsg.delete().catch(() => {}), 10000);
 }
   }
@@ -1895,7 +1895,7 @@ if (command === '!topstreak' || command === '!top-streak' || command === '!strea
   const allUsers = await User.find({
     userId: { $regex: /^[0-9]{17,19}$/ },
     bestStreak: { $gt: 0 }
-  }).sort({ bestStreak: -1 }).limit(10);
+  }).sort({ bestStreak: -1 }).limit(5);
 
   if (allUsers.length === 0) {
     return message.reply('📊 Aucun record de winstreak enregistré pour le moment.');
@@ -1903,7 +1903,7 @@ if (command === '!topstreak' || command === '!top-streak' || command === '!strea
 
   const embed = new EmbedBuilder()
     .setColor('#FF6B00')
-    .setTitle('🔥 TOP 10 - Records de Winstreak')
+    .setTitle('🔥 TOP 5 - Records de Winstreak')
     .setDescription('Les meilleures séries de victoires consécutives !\n')
     .setTimestamp();
 
