@@ -233,6 +233,12 @@ async function sendReminder(messageId) {
   }
 }
 
+function createProgressBar(current, total, length = 10) {
+  const filled = Math.floor((current / total) * length);
+  const empty = length - filled;
+  return '█'.repeat(filled) + '░'.repeat(empty);
+}
+
 async function canSpinToday(userId) {
   const spinData = await DailySpin.findOne({ userId });
   
@@ -910,6 +916,51 @@ await handleMilestone(user, interaction.channel.id);
       await interaction.reply('✅ Pari annulé et tous les parieurs ont été remboursés.');
     }
 
+    if (action === 'quick' && params[0] === 'cancel' && params[1] === 'combi') {
+  const combiId = params[2];
+  
+  const combi = await Combi.findOne({ combiId, userId: interaction.user.id });
+
+  if (!combi) {
+    return interaction.reply({ content: '❌ Combiné introuvable ou vous n\'en êtes pas le propriétaire.', ephemeral: true });
+  }
+
+  if (combi.status !== 'confirmed') {
+    return interaction.reply({ content: '❌ Ce combiné ne peut plus être annulé.', ephemeral: true });
+  }
+
+  // Vérifier qu'aucun pari du combiné n'est résolu
+  for (const bet of combi.bets) {
+    const betData = await Bet.findOne({ messageId: bet.messageId });
+    if (betData && betData.status === 'resolved') {
+      return interaction.reply({ content: '❌ Impossible d\'annuler : au moins un match est déjà terminé.', ephemeral: true });
+    }
+  }
+
+  // Rembourser
+  const user = await getUser(interaction.user.id);
+  user.balance += combi.totalStake;
+  await user.save();
+
+  combi.status = 'cancelled';
+  await combi.save();
+
+  const embed = new EmbedBuilder()
+    .setColor('#FFA500')
+    .setTitle('🚫 Combiné Annulé')
+    .setDescription(`Votre combiné a été annulé et vous avez été remboursé.`)
+    .addFields(
+      { name: '💰 Montant remboursé', value: `${combi.totalStake}€`, inline: true },
+      { name: '💳 Nouveau solde', value: `${user.balance}€`, inline: true }
+    );
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+  
+  // Mettre à jour le message original
+  const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0]);
+  await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+}
+
     if (action === 'leaderboard') {
       const sortBy = params[0];
       
@@ -1063,7 +1114,8 @@ await handleMilestone(user, interaction.channel.id);
         });
       }
 
-      console.log(`✅ Pari enregistré pour ${interaction.user.tag} - Total parieurs: ${Object.keys(updateResult.bettors).length}`);
+      console.log(`✅ Pari
+      enregistré pour ${interaction.user.tag} - Total parieurs: ${Object.keys(updateResult.bettors).length}`);
 
       try {
         const channel = await client.channels.fetch(bet.channelId);
@@ -1088,18 +1140,36 @@ await handleMilestone(user, interaction.channel.id);
         console.error('Erreur mise à jour:', error);
       }
 
-      const successEmbed = new EmbedBuilder()
-        .setColor('#00FF00')
-        .setTitle('✅ Pari Placé !')
-        .setDescription(`Vous avez misé **${amount}€** sur **${bet.options[optIndex].name}**`)
-        .addFields(
-          { name: 'Cote', value: `${odds}x`, inline: true },
-          { name: 'Gain potentiel', value: `${potentialWin}€`, inline: true },
-          { name: 'Profit potentiel', value: `+${potentialWin - amount}€`, inline: true },
-          { name: 'Nouveau solde', value: `${user.balance}€` }
-        );
+const successEmbed = new EmbedBuilder()
+  .setColor('#00FF00')
+  .setTitle('✅ Pari Placé !')
+  .setDescription(`Vous avez misé **${amount}€** sur **${bet.options[optIndex].name}**`)
+  .addFields(
+    { name: '📊 Match', value: bet.question },
+    { name: '🎯 Cote', value: `${odds}x`, inline: true },
+    { name: '💎 Gain potentiel', value: `${potentialWin}€`, inline: true },
+    { name: '💸 Profit potentiel', value: `+${potentialWin - amount}€`, inline: true },
+    { name: '💳 Nouveau solde', value: `${user.balance}€`, inline: true },
+    { name: '📈 Paris en cours', value: `${await Bet.countDocuments({ status: { $in: ['open', 'locked'] }, [`bettors.${interaction.user.id}`]: { $exists: true } })}`, inline: true }
+  );
 
-      await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+// 🆕 AFFICHER LA CLÔTURE SI DISPONIBLE
+if (bet.closingTime) {
+  const timeUntilClosing = new Date(bet.closingTime).getTime() - Date.now();
+  const minutesLeft = Math.floor(timeUntilClosing / 60000);
+  
+  if (minutesLeft > 0) {
+    successEmbed.addFields({
+      name: '⏰ Clôture des paris',
+      value: `Dans **${minutesLeft} minutes** (<t:${Math.floor(new Date(bet.closingTime).getTime() / 1000)}:R>)`,
+      inline: false
+    });
+  }
+}
+
+successEmbed.setFooter({ text: '🍀 Bonne chance ! Utilisez !mes-paris pour suivre vos paris' });
+
+await interaction.reply({ embeds: [successEmbed], ephemeral: true });
     }
   }
 });
@@ -1293,55 +1363,69 @@ client.on('messageCreate', async (message) => {
   await loadingMsg.edit({ embeds: [resultEmbed] });
 }
 
-  if (command === '!profil' || command === '!profile' || command === '!stats') {
-    const targetUser = message.mentions.users.first() || message.author;
-    const user = await getUser(targetUser.id);
-    const winrate = await calculateWinrate(targetUser.id);
+if (command === '!profil' || command === '!profile' || command === '!stats') {
+  const targetUser = message.mentions.users.first() || message.author;
+  const user = await getUser(targetUser.id);
+  const winrate = await calculateWinrate(targetUser.id);
+  
+  // 🆕 CALCUL DU CLASSEMENT
+  const allUsersByBalance = await User.find({
+    userId: { $regex: /^[0-9]{17,19}$/ }
+  }).sort({ balance: -1 });
+  
+  const allUsersByWinrate = await User.find({
+    userId: { $regex: /^[0-9]{17,19}$/ },
+    'stats.totalBets': { $gt: 0 }
+  }).sort({ 'stats.wonBets': -1 });
+  
+  const rankBalance = allUsersByBalance.findIndex(u => u.userId === targetUser.id) + 1;
+  const rankWinrate = allUsersByWinrate.findIndex(u => u.userId === targetUser.id) + 1;
+  
+  const recentHistory = user.history.slice(-5).reverse();
+
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle(`📊 Profil de ${targetUser.username}`)
+    .setThumbnail(targetUser.displayAvatarURL())
+    .addFields(
+      { name: '💵 Solde', value: `**${user.balance}€**`, inline: true },
+      { name: '📊 Winrate', value: `**${winrate}%**`, inline: true },
+      { name: '🎲 Paris totaux', value: `${user.stats.totalBets}`, inline: true },
+      { name: '✅ Gagnés', value: `${user.stats.wonBets}`, inline: true },
+      { name: '❌ Perdus', value: `${user.stats.lostBets}`, inline: true },
+      { name: '⚖️ Ratio', value: `${user.stats.wonBets}/${user.stats.lostBets}`, inline: true },
+      // 🆕 CLASSEMENT
+      { name: '🏆 Classement (Solde)', value: `#${rankBalance}/${allUsersByBalance.length}`, inline: true },
+      { name: '📈 Classement (Victoires)', value: rankWinrate > 0 ? `#${rankWinrate}/${allUsersByWinrate.length}` : 'N/A', inline: true },
+      { name: '\u200b', value: '\u200b', inline: true }
+    )
+    .setTimestamp();
     
-    const recentHistory = user.history.slice(-5).reverse();
+  // Affichage des paliers
+  const milestonesText = user.milestonesReached && user.milestonesReached.length > 0
+    ? user.milestonesReached.sort((a, b) => b - a).slice(0, 5).map(m => `✅ ${m} paris`).join('\n')
+    : 'Aucun palier atteint';
 
-    const embed = new EmbedBuilder()
-      .setColor('#FFD700')
-      .setTitle(`📊 Profil de ${targetUser.username}`)
-      .setThumbnail(targetUser.displayAvatarURL())
-      .addFields(
-        { name: '💵 Solde', value: `**${user.balance}€**`, inline: true },
-        { name: '📊 Winrate', value: `**${winrate}%**`, inline: true },
-        { name: '🎲 Paris totaux', value: `${user.stats.totalBets}`, inline: true },
-        { name: '✅ Gagnés', value: `${user.stats.wonBets}`, inline: true },
-        { name: '❌ Perdus', value: `${user.stats.lostBets}`, inline: true },
-        { name: '⚖️ Ratio', value: `${user.stats.wonBets}/${user.stats.lostBets}`, inline: true }
-      )
-      .setTimestamp();
-    // ⭐ AFFICHAGE DES PALIERS
-const milestonesText = user.milestonesReached && user.milestonesReached.length > 0
-  ? user.milestonesReached.sort((a, b) => b - a).slice(0, 5).map(m => `✅ ${m} paris`).join('\n')
-  : 'Aucun palier atteint';
+  const nextMilestone = getNextMilestone(user.stats.wonBets);
 
-const nextMilestone = getNextMilestone(user.stats.wonBets);
+  embed.addFields(
+    { name: '🏆 Derniers paliers', value: milestonesText, inline: true },
+    { name: '🎯 Prochain palier', value: `${nextMilestone} paris`, inline: true },
+    { name: '\u200b', value: '\u200b', inline: true }
+  );
 
-embed.addFields(
-  { name: '🏆 Derniers paliers', value: milestonesText, inline: true },
-  { name: '🎯 Prochain palier', value: `${nextMilestone} paris`, inline: true },
-  { name: '\u200b', value: '\u200b', inline: true }
-);
-
-    if (recentHistory.length > 0) {
+  if (recentHistory.length > 0) {
     let historyText = '';
     for (const h of recentHistory) {
       const resultEmoji = h.result === 'won' ? '✅' : '❌';
-      
-      // ⭐ DÉTECTER SI C'EST UN COMBINÉ
       const isCombi = h.betId && h.betId.startsWith('combi_');
       
       if (isCombi) {
-        // ⭐ FORMAT POUR COMBINÉ
         const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
-        historyText += `${resultEmoji} 🎰 **${h.question}** — ${h.option} — Mise: ${h.amount}€ — ${profit}\n`;
+        historyText += `${resultEmoji} 🎰 **${h.question}** – ${h.option} – Mise: ${h.amount}€ – ${profit}\n`;
       } else {
-        // ⭐ FORMAT POUR PARI SIMPLE (existant)
         const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
-        historyText += `${resultEmoji} **${h.question}** — ${h.option} (${h.amount}€) ${profit}\n`;
+        historyText += `${resultEmoji} **${h.question}** – ${h.option} (${h.amount}€) ${profit}\n`;
       }
     }
     embed.addFields({ name: '📜 Historique Récent', value: historyText, inline: false });
@@ -2691,96 +2775,126 @@ if (bet.isBoosted) {
 }
 
 if (command === '!mes-combis' || command === '!mc') {
-    const combis = await Combi.find({ userId: message.author.id }).sort({ createdAt: -1 }).limit(3);
+  const combis = await Combi.find({ userId: message.author.id }).sort({ createdAt: -1 }).limit(3);
 
-    if (combis.length === 0) {
-      return message.reply('🔭 Vous n\'avez aucun combiné enregistré.');
+  if (combis.length === 0) {
+    return message.reply('🔭 Vous n\'avez aucun combiné enregistré.');
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle('🎰 Vos Combinés')
+    .setDescription(`Vous avez **${combis.length}** combiné(s) récent(s) :`);
+
+  // 🆕 BOUTONS D'ANNULATION
+  const rows = [];
+  let currentRow = new ActionRowBuilder();
+  let buttonCount = 0;
+
+  for (const combi of combis) {
+    const statusEmoji = {
+      'confirmed': '⏳',
+      'won': '✅',
+      'lost': '❌',
+      'cancelled': '🚫'
+    }[combi.status];
+
+    const statusText = {
+      'confirmed': 'En cours',
+      'won': `GAGNÉ - ${combi.potentialWin}€`,
+      'lost': 'Perdu',
+      'cancelled': 'Annulé'
+    }[combi.status];
+
+    let fieldValue = `**Statut :** ${statusEmoji} ${statusText}\n`;
+    fieldValue += `**Mise :** ${combi.totalStake}€ | **Cote :** ${combi.totalOdds.toFixed(2)}x | **Gain potentiel :** ${combi.potentialWin}€\n`;
+    fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length} matchs résolus\n\n`;
+    fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length}\n`;
+    fieldValue += `${createProgressBar(combi.resolvedBets, combi.bets.length)} ${Math.floor((combi.resolvedBets / combi.bets.length) * 100)}%\n\n`;
+    
+    fieldValue += `**📋 Paris du combiné :**\n`;
+    
+    const processedBets = combi.processedBets || [];
+    
+    for (let i = 0; i < combi.bets.length; i++) {
+      const b = combi.bets[i];
+      
+      let betStatusEmoji;
+      
+      if (combi.status === 'won') {
+        betStatusEmoji = '✅';
+      } else if (combi.status === 'lost') {
+        const betData = await Bet.findOne({ messageId: b.messageId });
+        
+        if (betData && betData.status === 'resolved' && betData.winningOptions && Array.isArray(betData.winningOptions)) {
+          const wasWinning = betData.winningOptions.includes(b.optionIndex);
+          betStatusEmoji = wasWinning ? '✅' : '❌';
+        } else if (betData && betData.status === 'resolved') {
+          betStatusEmoji = '🚫';
+        } else {
+          betStatusEmoji = '⏳';
+        }
+      } else if (combi.status === 'confirmed') {
+        betStatusEmoji = processedBets.includes(b.messageId) ? '✅' : '⏳';
+      } else {
+        betStatusEmoji = '🚫';
+      }
+      
+      fieldValue += `${i + 1}. ${betStatusEmoji} ${b.question} → ${b.optionName} (${b.odds}x)\n`;
     }
 
-    const embed = new EmbedBuilder()
-      .setColor('#FFD700')
-      .setTitle('🎰 Vos Combinés')
-      .setDescription(`Vous avez **${combis.length}** combiné(s) récent(s) :`);
+    embed.addFields({
+      name: `📅 ${new Date(combi.createdAt).toLocaleString('fr-FR', { 
+        timeZone: 'Europe/Paris',
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}`,
+      value: fieldValue,
+      inline: false
+    });
 
-    for (const combi of combis) {
-      const statusEmoji = {
-        'confirmed': '⏳',
-        'won': '✅',
-        'lost': '❌',
-        'cancelled': '🚫'
-      }[combi.status];
-
-      const statusText = {
-        'confirmed': 'En cours',
-        'won': `GAGNÉ - ${combi.potentialWin}€`,
-        'lost': 'Perdu',
-        'cancelled': 'Annulé'
-      }[combi.status];
-
-      let fieldValue = `**Statut :** ${statusEmoji} ${statusText}\n`;
-      fieldValue += `**Mise :** ${combi.totalStake}€ | **Cote :** ${combi.totalOdds.toFixed(2)}x | **Gain potentiel :** ${combi.potentialWin}€\n`;
-      fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length} matchs résolus\n\n`;
-      
-      // ⭐ DÉTAILS DES PARIS AVEC STATUT CORRECT
-      fieldValue += `**📋 Paris du combiné :**\n`;
-      
-      // ⭐ Récupérer le statut réel de chaque pari
-      const processedBets = combi.processedBets || [];
-      
-      for (let i = 0; i < combi.bets.length; i++) {
-        const b = combi.bets[i];
-        
-        let betStatusEmoji;
-        
-        if (combi.status === 'won') {
-          // ✅ Combiné gagné = tous les paris sont gagnants
-          betStatusEmoji = '✅';
-        } else if (combi.status === 'lost') {
-          // ❌ Combiné perdu
-          
-          // ⭐ TOUJOURS VÉRIFIER DANS LA DB
-          const betData = await Bet.findOne({ messageId: b.messageId });
-          
-          if (betData && betData.status === 'resolved' && betData.winningOptions && Array.isArray(betData.winningOptions)) {
-            // Pari résolu : vérifier si gagnant ou perdant
-            const wasWinning = betData.winningOptions.includes(b.optionIndex);
-            betStatusEmoji = wasWinning ? '✅' : '❌';
-          } else if (betData && betData.status === 'resolved') {
-            // Résolu mais pas de winningOptions (annulé ?)
-            betStatusEmoji = '🚫';
-          } else {
-            // Pas encore résolu
-            betStatusEmoji = '⏳';
-          }
-        } else if (combi.status === 'confirmed') {
-          // ⏳ Combiné en cours = vérifier si ce pari a été validé
-          betStatusEmoji = processedBets.includes(b.messageId) ? '✅' : '⏳';
-        } else {
-          // Cancelled
-          betStatusEmoji = '🚫';
+    // 🆕 AJOUTER BOUTON D'ANNULATION SI EN COURS
+    if (combi.status === 'confirmed') {
+      // Vérifier qu'aucun pari n'est résolu
+      let canCancel = true;
+      for (const bet of combi.bets) {
+        const betData = await Bet.findOne({ messageId: bet.messageId });
+        if (betData && betData.status === 'resolved') {
+          canCancel = false;
+          break;
         }
-        
-       fieldValue += `${i + 1}. ${betStatusEmoji} ${b.question} → ${b.optionName} (${b.odds}x)\n`;
       }
 
-      embed.addFields({
-        name: `📅 ${new Date(combi.createdAt).toLocaleString('fr-FR', { 
-          timeZone: 'Europe/Paris',
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-  })}`,
-        value: fieldValue,
-        inline: false
-      });
+      if (canCancel && buttonCount < 5) {
+        currentRow.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`quick_cancel_combi_${combi.combiId}`)
+            .setLabel(`❌ Annuler (${combi.totalStake}€)`)
+            .setStyle(ButtonStyle.Danger)
+        );
+        buttonCount++;
+
+        if (buttonCount === 5) {
+          rows.push(currentRow);
+          currentRow = new ActionRowBuilder();
+          buttonCount = 0;
+        }
+      }
     }
-
-    embed.setFooter({ text: 'Utilisez !combi-details [id] pour plus de détails sur un combiné' });
-
-    message.reply({ embeds: [embed] });
   }
+
+  // Ajouter la dernière ligne si elle contient des boutons
+  if (buttonCount > 0) {
+    rows.push(currentRow);
+  }
+
+  embed.setFooter({ text: '💡 Cliquez sur ❌ pour annuler un combiné en cours' });
+
+  message.reply({ embeds: [embed], components: rows });
+}
   
 if (command === '!aide' || command === '!help') {
   const helpEmbed = new EmbedBuilder()
