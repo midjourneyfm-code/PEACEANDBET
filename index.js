@@ -1163,17 +1163,16 @@ await handleMilestone(user, interaction.channel.id);
 const successEmbed = new EmbedBuilder()
   .setColor('#00FF00')
   .setTitle('✅ Pari Placé !')
-  .setDescription(`Vous avez misé **${amount}€** sur **${bet.options[optIndex].name}**`)
+  .setDescription(`Vous avez misé **${amount}€** sur **${bet.options[optionIndex].name}**`)
   .addFields(
     { name: '📊 Match', value: bet.question },
     { name: '🎯 Cote', value: `${odds}x`, inline: true },
     { name: '💎 Gain potentiel', value: `${potentialWin}€`, inline: true },
     { name: '💸 Profit potentiel', value: `+${potentialWin - amount}€`, inline: true },
-    { name: '💳 Nouveau solde', value: `${user.balance}€`, inline: true },
-    { name: '📈 Paris en cours', value: `${await Bet.countDocuments({ status: { $in: ['open', 'locked'] }, [`bettors.${interaction.user.id}`]: { $exists: true } })}`, inline: true }
+    { name: '💳 Nouveau solde', value: `${user.balance}€`, inline: true }
   );
 
-// 🆕 AFFICHER LA CLÔTURE SI DISPONIBLE
+// Afficher la clôture si disponible
 if (bet.closingTime) {
   const timeUntilClosing = new Date(bet.closingTime).getTime() - Date.now();
   const minutesLeft = Math.floor(timeUntilClosing / 60000);
@@ -1189,7 +1188,17 @@ if (bet.closingTime) {
 
 successEmbed.setFooter({ text: '🍀 Bonne chance ! Utilisez !mes-paris pour suivre vos paris' });
 
-await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+// ✅ ENVOYER UNIQUEMENT EN MESSAGE PRIVÉ
+try {
+  await message.author.send({ embeds: [successEmbed] });
+  // Petit message de confirmation qui s'efface
+  const confirmMsg = await message.reply('✅ Pari enregistré ! Vérifiez vos messages privés 📬');
+  setTimeout(() => confirmMsg.delete().catch(() => {}), 3000);
+} catch (error) {
+  // Si les DM sont fermés, message d'erreur
+  const errorMsg = await message.reply('⚠️ Impossible de vous envoyer un message privé. Activez vos DM pour recevoir les confirmations de paris.');
+  setTimeout(() => errorMsg.delete().catch(() => {}), 8000);
+}
     }
   }
 });
@@ -2835,10 +2844,6 @@ if (command === '!mes-combis' || command === '!mc') {
     .setTitle('🎰 Vos Combinés')
     .setDescription(`Vous avez **${combis.length}** combiné(s) récent(s) :`);
 
-  // 🆕 BOUTONS D'ANNULATION
-  const rows = [];
-  let currentRow = new ActionRowBuilder();
-  let buttonCount = 0;
   let combiIndex = 0;
 
   for (const combi of combis) {
@@ -2858,11 +2863,15 @@ if (command === '!mes-combis' || command === '!mc') {
       'cancelled': 'Annulé'
     }[combi.status];
 
-    let fieldValue = `**ID :** \`${combi.combiId}\`\n`; // 🆕 Afficher l'ID
+    let fieldValue = `**ID :** \`${combi.combiId}\`\n`;
     fieldValue += `**Statut :** ${statusEmoji} ${statusText}\n`;
     fieldValue += `**Mise :** ${combi.totalStake}€ | **Cote :** ${combi.totalOdds.toFixed(2)}x | **Gain potentiel :** ${combi.potentialWin}€\n`;
-    fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length}\n`;
-    fieldValue += `${createProgressBar(combi.resolvedBets, combi.bets.length)} ${Math.floor((combi.resolvedBets / combi.bets.length) * 100)}%\n\n`;
+    fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length} matchs résolus\n`;
+    
+    // Barre de progression visuelle
+    const progressBar = createProgressBar(combi.resolvedBets, combi.bets.length);
+    const progressPercent = Math.floor((combi.resolvedBets / combi.bets.length) * 100);
+    fieldValue += `${progressBar} ${progressPercent}%\n\n`;
     
     fieldValue += `**📋 Paris du combiné :**\n`;
     
@@ -2894,6 +2903,23 @@ if (command === '!mes-combis' || command === '!mc') {
       
       fieldValue += `${i + 1}. ${betStatusEmoji} ${b.question} → ${b.optionName} (${b.odds}x)\n`;
     }
+    
+    // 🆕 Indication pour annuler si le combiné est en cours
+    if (combi.status === 'confirmed') {
+      // Vérifier qu'aucun pari n'est résolu
+      let canCancel = true;
+      for (const bet of combi.bets) {
+        const betData = await Bet.findOne({ messageId: bet.messageId });
+        if (betData && betData.status === 'resolved') {
+          canCancel = false;
+          break;
+        }
+      }
+      
+      if (canCancel) {
+        fieldValue += `\n💡 _Pour annuler : \`!combi-cancel ${combi.combiId}\`_`;
+      }
+    }
 
     embed.addFields({
       name: `🎰 Combiné #${combiIndex} - ${new Date(combi.createdAt).toLocaleString('fr-FR', { 
@@ -2906,48 +2932,11 @@ if (command === '!mes-combis' || command === '!mc') {
       value: fieldValue,
       inline: false
     });
-
-    // 🆕 AJOUTER BOUTON D'ANNULATION SI EN COURS
-    if (combi.status === 'confirmed') {
-      // Vérifier qu'aucun pari n'est résolu
-      let canCancel = true;
-      for (const bet of combi.bets) {
-        const betData = await Bet.findOne({ messageId: bet.messageId });
-        if (betData && betData.status === 'resolved') {
-          canCancel = false;
-          break;
-        }
-      }
-
-      if (canCancel && buttonCount < 5) {
-        // 🆕 Label plus descriptif avec le numéro du combiné
-        currentRow.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`quick_cancel_combi_${combi.combiId}`)
-            .setLabel(`❌ Annuler Combiné #${combiIndex} (${combi.totalStake}€)`)
-            .setStyle(ButtonStyle.Danger)
-        );
-        buttonCount++;
-
-        if (buttonCount === 5) {
-          rows.push(currentRow);
-          currentRow = new ActionRowBuilder();
-          buttonCount = 0;
-        }
-      }
-    }
   }
 
-  // Ajouter la dernière ligne si elle contient des boutons
-  if (buttonCount > 0) {
-    rows.push(currentRow);
-  }
+  embed.setFooter({ text: '💡 Utilisez !combi-cancel [ID] pour annuler un combiné en cours' });
 
-  if (rows.length > 0) {
-    embed.setFooter({ text: '💡 Cliquez sur ❌ pour annuler un combiné en cours' });
-  }
-
-  message.reply({ embeds: [embed], components: rows });
+  message.reply({ embeds: [embed] });
 }
   
 if (command === '!aide' || command === '!help') {
