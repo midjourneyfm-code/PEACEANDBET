@@ -2002,199 +2002,194 @@ if (parieurRole) {
 message.reply(replyText);
   }
 
-  if (command === '!boost') {
-    const member = await message.guild.members.fetch(message.author.id);
-    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+if (command === '!boost') {
+  const member = await message.guild.members.fetch(message.author.id);
+  const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
 
-    if (!hasRole) {
-      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris boostés.`);
-    }
+  if (!hasRole) {
+    return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris boostés.`);
+  }
 
-    const content = message.content.slice(command.length).trim();
-    
-    if (!content.includes('|')) {
-      return message.reply('❌ Format incorrect. Utilisez : `!boost Nom de l\'event | cote | heure`\n\nExemple: `!boost Victoire PSG | 5.5 | 21h30`');
-    }
-
-    const parts = content.split('|').map(p => p.trim());
-    
-    if (parts.length < 2 || parts.length > 3) {
-      return message.reply('❌ Format incorrect. Utilisez : `!boost Nom de l\'event | cote | heure`');
-    }
-
-    const eventName = parts[0];
-    const oddsValue = parseFloat(parts[1]);
-    const closingTimeStr = parts[2] || null;
-
-    if (isNaN(oddsValue) || oddsValue < 1.01) {
-      return message.reply(`❌ La cote est invalide. Elle doit être >= 1.01`);
-    }
-
-    let closingTime = null;
-    let closingTimestamp = null;
-    
-    if (closingTimeStr) {
-      const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
-      const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
-      
-if (hoursMatch) {
-  const targetHour = parseInt(hoursMatch[1]);
-  const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+  const content = message.content.slice(command.length).trim();
   
-  if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-    // ⭐ CRÉER LA DATE DIRECTEMENT EN UTC+1
-    const now = new Date();
+  if (!content.includes('|')) {
+    return message.reply('❌ Format incorrect. Utilisez : `!boost Nom de l\'event | cote | heure`\n\nExemple: `!boost Victoire PSG | 5.5 | 21h30`');
+  }
+
+  const parts = content.split('|').map(p => p.trim());
+  
+  if (parts.length < 2 || parts.length > 3) {
+    return message.reply('❌ Format incorrect. Utilisez : `!boost Nom de l\'event | cote | heure`');
+  }
+
+  const eventName = parts[0];
+  const oddsValue = parseFloat(parts[1]);
+  const closingTimeStr = parts[2] || null;
+
+  if (isNaN(oddsValue) || oddsValue < 1.01) {
+    return message.reply(`❌ La cote est invalide. Elle doit être >= 1.01`);
+  }
+
+  let closingTime = null;
+  let closingTimestamp = null;
+  
+  if (closingTimeStr) {
+    const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
+    const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
     
-    // ⭐ Obtenir l'heure actuelle à Paris
-    const parisNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
-    
-    // ⭐ Créer la date de clôture à Paris
-    const closingDate = new Date();
-    closingDate.setHours(targetHour, targetMinute, 0, 0);
-    
-    // ⭐ Si l'heure de clôture est passée aujourd'hui, passer à demain
-    if (closingDate.getTime() <= now.getTime()) {
-      closingDate.setDate(closingDate.getDate() + 1);
-    }
-    
-    closingTimestamp = closingDate.getTime();
-    closingTime = closingDate;
+    if (hoursMatch) {
+      const targetHour = parseInt(hoursMatch[1]);
+      const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+      
+      if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
+        const closingDate = new Date();
+        closingDate.setHours(targetHour, targetMinute, 0, 0);
+        
+        if (closingDate.getTime() <= Date.now()) {
+          closingDate.setDate(closingDate.getDate() + 1);
         }
+        
+        closingTimestamp = closingDate.getTime();
+        closingTime = closingDate;
       }
     }
+  }
 
-    const embed = new EmbedBuilder()
-      .setColor('#FF00FF')
-      .setTitle('⚡💎 PEACE & BOOST 💎⚡')
-      .setDescription(`
-╔════════════════════════════════╗
-║                                                              ║
+  const embed = new EmbedBuilder()
+    .setColor('#FF00FF')
+    .setTitle('⚡💎 PEACE & BOOST 💎⚡')
+    .setDescription(`
+╔══════════════════════════════════════════════╗
+║                                              ║
 ║    🔥 **${eventName}** 🔥    ║
-║                                                              ║
+║                                              ║
 ║         **COTE BOOSTÉE: ${oddsValue}x**         ║
-║                                                              ║
-╚════════════════════════════════╝
+║                                              ║
+╚══════════════════════════════════════════════╝
 
 💰 **Pari à risque, récompense maximale !**
 🚀 **Une seule option, tout ou rien !**
 ⚡ **Tentez votre chance maintenant !**
 `)
-      .addFields(
-        { name: '🎯 Option', value: `**${eventName}**`, inline: true },
-        { name: '💎 Cote', value: `**${oddsValue}x**`, inline: true },
-        { name: '📈 Statut', value: '🟢 **EN COURS**', inline: true },
-        { name: '💵 Total des mises', value: '0€', inline: true },
-        { name: '👥 Parieurs', value: '0', inline: true },
-        { name: '⚡', value: '⚡', inline: true }
-      )
-      .setFooter({ text: `🔥 PARI BOOSTÉ par ${message.author.tag} 🔥` })
-      .setTimestamp();
+    .addFields(
+      { name: '🎯 Option', value: `**${eventName}**`, inline: true },
+      { name: '💎 Cote', value: `**${oddsValue}x**`, inline: true },
+      { name: '📈 Statut', value: '🟢 **EN COURS**', inline: true },
+      { name: '💵 Total des mises', value: '0€', inline: true },
+      { name: '👥 Parieurs', value: '0', inline: true },
+      { name: '⚡', value: '⚡', inline: true }
+    )
+    .setFooter({ text: `🔥 PARI BOOSTÉ par ${message.author.tag} 🔥` })
+    .setTimestamp();
 
-    if (closingTime) {
-      const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
-        timeZone: 'Europe/Paris',
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: false
-      });
-      embed.addFields({
-        name: '⏰ Clôture',
-        value: `${parisTimeStr} (<t:${Math.floor(closingTimestamp / 1000)}:R>)`,
-        inline: false
-      });
-    }
-
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`bet_PLACEHOLDER_0`)
-          .setLabel(`🔥 PARIER SUR ${eventName.toUpperCase()} (${oddsValue}x) 🔥`)
-          .setStyle(ButtonStyle.Danger)
-          .setEmoji('💎')
-      );
-
-    const adminRow = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`cancel_PLACEHOLDER`)
-          .setLabel('Annuler le pari')
-          .setStyle(ButtonStyle.Secondary)
-          .setEmoji('❌')
-      );
-
-   const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
-    let messageContent = '';
-    
-    if (parieurRole) {
-      messageContent = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥`;
-    }
-    
-    const betMessage = await message.channel.send({ 
-      content: messageContent,
-      embeds: [embed], 
-      components: [row, adminRow] 
+  if (closingTime) {
+    const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+      timeZone: 'Europe/Paris',
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false
     });
-
-    const finalRow = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`bet_${betMessage.id}_0`)
-          .setLabel(`🔥 PARIER SUR ${eventName.toUpperCase()} (${oddsValue}x) 🔥`)
-          .setStyle(ButtonStyle.Danger)
-          .setEmoji('💎')
-      );
-
-    const finalAdminRow = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`cancel_${betMessage.id}`)
-          .setLabel('Annuler le pari')
-          .setStyle(ButtonStyle.Secondary)
-          .setEmoji('❌')
-      );
-
-    await betMessage.edit({ 
-      content: messageContent, 
-      embeds: [embed], 
-      components: [finalRow, finalAdminRow] 
+    embed.addFields({
+      name: '⏰ Clôture',
+      value: `${parisTimeStr} (<t:${Math.floor(closingTimestamp / 1000)}:R>)`,
+      inline: false
     });
+  }
 
-    const newBet = new Bet({
-      messageId: betMessage.id,
-      question: `⚡ BOOST: ${eventName}`,
-      options: [{ name: eventName, odds: oddsValue }],
-      initialOdds: [oddsValue],
-      bettors: {},
-      creator: message.author.id,
-      channelId: message.channel.id,
-      totalPool: 0,
-      status: 'open',
-      createdAt: new Date(),
-      closingTime: closingTime,
-      reminderSent: false,
-      isBoosted: true
-    });
-    await newBet.save();
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`bet_PLACEHOLDER_0`)
+        .setLabel(`🔥 PARIER SUR ${eventName.toUpperCase()} (${oddsValue}x) 🔥`)
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('💎')
+    );
 
-    // Configuration de la clôture automatique
-    if (closingTime) {
-      const timeUntilClosing = closingTimestamp - Date.now();
-      if (timeUntilClosing > 0) {
+  const adminRow = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`cancel_PLACEHOLDER`)
+        .setLabel('Annuler le pari')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('❌')
+    );
+
+  // ⭐ PRÉPARER LE CONTENU AVEC LA MENTION DU RÔLE
+  const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
+  let messageContent = '';
+  
+  if (parieurRole) {
+    messageContent = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥`;
+  }
+  
+  // ⭐ ENVOYER LE MESSAGE UNE SEULE FOIS AVEC DES PLACEHOLDERS
+  const betMessage = await message.channel.send({ 
+    content: messageContent,
+    embeds: [embed], 
+    components: [row, adminRow] 
+  });
+
+  // ⭐ MAINTENANT, METTRE À JOUR AVEC LES VRAIS IDs
+  const finalRow = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`bet_${betMessage.id}_0`)
+        .setLabel(`🔥 PARIER SUR ${eventName.toUpperCase()} (${oddsValue}x) 🔥`)
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('💎')
+    );
+
+  const finalAdminRow = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`cancel_${betMessage.id}`)
+        .setLabel('Annuler le pari')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('❌')
+    );
+
+  // ⭐ MODIFIER LE MESSAGE AVEC LES BONS BOUTONS (SANS REENVOYER LE CONTENU)
+  await betMessage.edit({ 
+    components: [finalRow, finalAdminRow] 
+  });
+
+  // Créer le pari en DB
+  const newBet = new Bet({
+    messageId: betMessage.id,
+    question: `⚡ BOOST: ${eventName}`,
+    options: [{ name: eventName, odds: oddsValue }],
+    initialOdds: [oddsValue],
+    bettors: {},
+    creator: message.author.id,
+    channelId: message.channel.id,
+    totalPool: 0,
+    status: 'open',
+    createdAt: new Date(),
+    closingTime: closingTime,
+    reminderSent: false,
+    isBoosted: true
+  });
+  await newBet.save();
+
+  // Configuration de la clôture automatique
+  if (closingTime) {
+    const timeUntilClosing = closingTimestamp - Date.now();
+    if (timeUntilClosing > 0) {
+      setTimeout(async () => {
+        await closeBetAutomatically(betMessage.id);
+      }, timeUntilClosing);
+      
+      const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
+      if (oneHourBefore > 0) {
         setTimeout(async () => {
-          await closeBetAutomatically(betMessage.id);
-        }, timeUntilClosing);
-        
-        const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
-        if (oneHourBefore > 0) {
-          setTimeout(async () => {
-            await sendReminder(betMessage.id);
-          }, oneHourBefore);
-        }
+          await sendReminder(betMessage.id);
+        }, oneHourBefore);
       }
     }
-
-    console.log(`⚡ Boost créé : ${betMessage.id} - ${eventName} (${oddsValue}x)`);
   }
+
+  console.log(`⚡ Boost créé : ${betMessage.id} - ${eventName} (${oddsValue}x)`);
+}
 
   if (command === '!lock' || command === '!verrouiller') {
   const betMessageId = args[1];
