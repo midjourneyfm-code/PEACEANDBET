@@ -339,6 +339,8 @@ if (!isWinningBet) {
   
   await user.save();
 
+  
+
   // ⭐⭐⭐ ANNONCE PUBLIQUE (AJOUT MANQUANT) ⭐⭐⭐
   try {
     const bet = await Bet.findOne({ messageId: messageId });
@@ -401,6 +403,18 @@ if (!isWinningBet) {
         user.balance += combi.potentialWin;
         user.stats.totalBets++;
         user.stats.wonBets++;
+        
+        // ⭐ AJOUTER À L'HISTORIQUE
+        user.history.push({
+          betId: combi.combiId,
+          question: `Combiné ${combi.bets.length} matchs`,
+          option: `Cote ${combi.totalOdds.toFixed(2)}x`,
+          amount: combi.totalStake,
+          winnings: combi.potentialWin,
+          result: 'won',
+          timestamp: new Date()
+        });
+        
         await user.save();
 
         // ⭐ NOTIFICATION COMBINÉ COMPLET GAGNÉ
@@ -2178,8 +2192,6 @@ const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieu
 if (parieurRole) {
   replyText = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥\n\n` + replyText;
 }
-
-message.reply(replyText);
   }
 
   if (command === '!lock' || command === '!verrouiller') {
