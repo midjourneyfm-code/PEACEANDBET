@@ -1357,14 +1357,17 @@ successEmbed.setFooter({ text: '🍀 Bonne chance ! Utilisez !mes-paris pour sui
 
 // ✅ ENVOYER UNIQUEMENT EN MESSAGE PRIVÉ
 try {
-  await message.author.send({ embeds: [successEmbed] });
-  // Petit message de confirmation qui s'efface
-  const confirmMsg = await message.reply('✅ Pari enregistré ! Vérifiez vos messages privés 📬');
-  setTimeout(() => confirmMsg.delete().catch(() => {}), 3000);
+  await interaction.user.send({ embeds: [successEmbed] });
+  
+  await interaction.reply({ 
+    content: '✅ Pari enregistré ! Vérifiez vos messages privés 📬', 
+    ephemeral: true 
+  });
 } catch (error) {
-  // Si les DM sont fermés, message d'erreur
-  const errorMsg = await message.reply('⚠️ Impossible de vous envoyer un message privé. Activez vos DM pour recevoir les confirmations de paris.');
-  setTimeout(() => errorMsg.delete().catch(() => {}), 8000);
+  await interaction.reply({ 
+    content: '⚠️ Impossible de vous envoyer un message privé.\n\n✅ Votre pari a quand même été enregistré !', 
+    ephemeral: true 
+  });
 }
     }
   }
@@ -1840,14 +1843,14 @@ successEmbed.setFooter({ text: '🍀 Bonne chance ! Utilisez !mes-paris pour sui
 
 // ✅ ENVOYER EN MESSAGE PRIVÉ (DM) au lieu de reply public
 try {
-  await interaction.user.send({ embeds: [successEmbed] });
+  await message.author.send({ embeds: [successEmbed] });
   // Confirmer avec un petit message public qui sera supprimé
-  const confirmMsg = await interaction.reply('✅ Pari enregistré ! Vérifiez vos messages privés pour le récapitulatif.');
+  const confirmMsg = await message.reply('✅ Pari enregistré ! Vérifiez vos messages privés pour le récapitulatif.');
   setTimeout(() => confirmMsg.delete().catch(() => {}), 5000);
 } catch (error) {
   // Si les DM sont fermés, envoyer en ephemeral (mais on ne peut pas avec message.reply)
   // Donc on envoie juste un message court qui sera supprimé
-  const fallbackMsg = await interaction.reply({ embeds: [successEmbed] });
+  const fallbackMsg = await message.reply({ embeds: [successEmbed] });
   setTimeout(() => fallbackMsg.delete().catch(() => {}), 10000);
 }
   }
