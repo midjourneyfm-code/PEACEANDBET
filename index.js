@@ -1953,42 +1953,39 @@ if (command === '!annuler-tout' || command === '!cancelall') {
     });
     await newBet.save();
 
-    let replyText = `✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``;
+let replyText = `✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``;
     
-    if (closingTime) {
-      const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
-        timeZone: 'Europe/Paris',
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: false
-      });
-      replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${parisTimeStr}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
-      
-      const timeUntilClosing = closingTimestamp - Date.now();
-      if (timeUntilClosing > 0) {
-        setTimeout(async () => {
-          await closeBetAutomatically(betMessage.id);
-        }, timeUntilClosing);
-        
-        const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
-        if (oneHourBefore > 0) {
-          setTimeout(async () => {
-            await sendReminder(betMessage.id);
-          }, oneHourBefore);
-        }
-      }
+if (closingTime) {
+  const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+    timeZone: 'Europe/Paris',
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: false
+  });
+  replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${parisTimeStr}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
+  
+  const timeUntilClosing = closingTimestamp - Date.now();
+  if (timeUntilClosing > 0) {
+    setTimeout(async () => {
+      await closeBetAutomatically(betMessage.id);
+    }, timeUntilClosing);
+    
+    const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
+    if (oneHourBefore > 0) {
+      setTimeout(async () => {
+        await sendReminder(betMessage.id);
+      }, oneHourBefore);
     }
-
-    let mentionText = '';
-const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
-if (parieurRole) {
-  mentionText = `${parieurRole} **Nouveau pari disponible !**\n\n`;
+  }
 }
 
-await betMessage.reply(mentionText + `✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``);
+// ⭐ Ajouter la mention @Parieur AVANT le message
+const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
+if (parieurRole) {
+  replyText = `${parieurRole} **Nouveau pari disponible !**\n\n` + replyText;
+}
 
-    
-    message.reply(replyText);
+message.reply(replyText);
   }
 
   if (command === '!boost') {
