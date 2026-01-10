@@ -476,11 +476,12 @@ function getNextMilestone(currentWonBets) {
 
 async function handleMilestone(user, channelId) {
   // ✅ COMPTER UNIQUEMENT LES PARIS SIMPLES ET COMBINÉS (PAS SAFE OR RISK)
-  const validWonBets = user.history.filter(h => 
+  const validWonBets = user.history ? user.history.filter(h => 
     h.result === 'won' && 
+    h.question && // Vérifier que question existe
     !h.question.includes('Safe or Risk') &&
-    !h.betId.startsWith('sor_')
-  ).length;
+    (!h.betId || !h.betId.startsWith('sor_'))
+  ).length : 0;
   
   const milestone = checkMilestone(validWonBets);
   
@@ -3394,7 +3395,7 @@ if (command === '!mes-combis' || command === '!mc') {
         '➡️ Parlez-en à un ami\n' +
         '➡️ Prenez une pause\n' +
         '➡️ Contactez une association d\'aide\n\n' +
-        '**💬 "J\'aurais dû m\'arrêter..." - Téo, 2025**'
+        '**💬 "Je rejoue plus ce soir.. !sor 2" - Téo, 2026**'
       )
       .setFooter({ text: '🎮 Jouez responsable | 🛡️ Protégez-vous' })
       .setTimestamp();
