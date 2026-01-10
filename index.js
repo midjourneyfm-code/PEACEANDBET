@@ -916,24 +916,25 @@ await handleMilestone(user, interaction.channel.id);
       await interaction.reply('✅ Pari annulé et tous les parieurs ont été remboursés.');
     }
 
-    if (action === 'quick' && params[0] === 'cancel' && params[1] === 'combi') {
+// Dans le bloc if (interaction.isButton()), ajoutez :
+if (action === 'quick' && params[0] === 'cancel' && params[1] === 'combi') {
   const combiId = params[2];
   
   const combi = await Combi.findOne({ combiId, userId: interaction.user.id });
 
   if (!combi) {
-    return interaction.reply({ content: '❌ Combiné introuvable ou vous n\'en êtes pas le propriétaire.', ephemeral: true });
+    return interaction.reply({ content: '❌ Combiné introuvable.', ephemeral: true });
   }
 
   if (combi.status !== 'confirmed') {
     return interaction.reply({ content: '❌ Ce combiné ne peut plus être annulé.', ephemeral: true });
   }
 
-  // Vérifier qu'aucun pari du combiné n'est résolu
+  // Vérifier qu'aucun pari n'est résolu
   for (const bet of combi.bets) {
     const betData = await Bet.findOne({ messageId: bet.messageId });
     if (betData && betData.status === 'resolved') {
-      return interaction.reply({ content: '❌ Impossible d\'annuler : au moins un match est déjà terminé.', ephemeral: true });
+      return interaction.reply({ content: '❌ Un match est déjà terminé.', ephemeral: true });
     }
   }
 
@@ -945,20 +946,10 @@ await handleMilestone(user, interaction.channel.id);
   combi.status = 'cancelled';
   await combi.save();
 
-  const embed = new EmbedBuilder()
-    .setColor('#FFA500')
-    .setTitle('🚫 Combiné Annulé')
-    .setDescription(`Votre combiné a été annulé et vous avez été remboursé.`)
-    .addFields(
-      { name: '💰 Montant remboursé', value: `${combi.totalStake}€`, inline: true },
-      { name: '💳 Nouveau solde', value: `${user.balance}€`, inline: true }
-    );
-
-  await interaction.reply({ embeds: [embed], ephemeral: true });
-  
-  // Mettre à jour le message original
-  const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0]);
-  await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+  await interaction.reply({ 
+    content: `✅ Combiné annulé ! Vous avez été remboursé de **${combi.totalStake}€**.\n💳 Nouveau solde : **${user.balance}€**`, 
+    ephemeral: true 
+  });
 }
 
     if (action === 'leaderboard') {
@@ -2790,8 +2781,11 @@ if (command === '!mes-combis' || command === '!mc') {
   const rows = [];
   let currentRow = new ActionRowBuilder();
   let buttonCount = 0;
+  let combiIndex = 0;
 
   for (const combi of combis) {
+    combiIndex++;
+    
     const statusEmoji = {
       'confirmed': '⏳',
       'won': '✅',
@@ -2806,11 +2800,10 @@ if (command === '!mes-combis' || command === '!mc') {
       'cancelled': 'Annulé'
     }[combi.status];
 
-    let fieldValue = `**Statut :** ${statusEmoji} ${statusText}\n`;
+    let fieldValue = `**ID :** \`${combi.combiId}\`\n`; // 🆕 Afficher l'ID
+    fieldValue += `**Statut :** ${statusEmoji} ${statusText}\n`;
     fieldValue += `**Mise :** ${combi.totalStake}€ | **Cote :** ${combi.totalOdds.toFixed(2)}x | **Gain potentiel :** ${combi.potentialWin}€\n`;
     fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length} matchs résolus\n\n`;
-    fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length}\n`;
-    fieldValue += `${createProgressBar(combi.resolvedBets, combi.bets.length)} ${Math.floor((combi.resolvedBets / combi.bets.length) * 100)}%\n\n`;
     
     fieldValue += `**📋 Paris du combiné :**\n`;
     
@@ -2844,11 +2837,10 @@ if (command === '!mes-combis' || command === '!mc') {
     }
 
     embed.addFields({
-      name: `📅 ${new Date(combi.createdAt).toLocaleString('fr-FR', { 
+      name: `🎰 Combiné #${combiIndex} - ${new Date(combi.createdAt).toLocaleString('fr-FR', { 
         timeZone: 'Europe/Paris',
-        year: 'numeric', 
-        month: 'long', 
         day: 'numeric',
+        month: 'short',
         hour: '2-digit',
         minute: '2-digit'
       })}`,
@@ -2869,10 +2861,11 @@ if (command === '!mes-combis' || command === '!mc') {
       }
 
       if (canCancel && buttonCount < 5) {
+        // 🆕 Label plus descriptif avec le numéro du combiné
         currentRow.addComponents(
           new ButtonBuilder()
             .setCustomId(`quick_cancel_combi_${combi.combiId}`)
-            .setLabel(`❌ Annuler (${combi.totalStake}€)`)
+            .setLabel(`❌ Annuler Combiné #${combiIndex} (${combi.totalStake}€)`)
             .setStyle(ButtonStyle.Danger)
         );
         buttonCount++;
@@ -2891,7 +2884,9 @@ if (command === '!mes-combis' || command === '!mc') {
     rows.push(currentRow);
   }
 
-  embed.setFooter({ text: '💡 Cliquez sur ❌ pour annuler un combiné en cours' });
+  if (rows.length > 0) {
+    embed.setFooter({ text: '💡 Cliquez sur ❌ pour annuler un combiné en cours' });
+  }
 
   message.reply({ embeds: [embed], components: rows });
 }
