@@ -26,6 +26,7 @@ const userSchema = new mongoose.Schema({
     wonBets: { type: Number, default: 0 },
     lostBets: { type: Number, default: 0 }
   },
+  milestonesReached: { type: [Number], default: [] }, // ⭐ LIGNE AJOUTÉE
   history: [{
     betId: String,
     question: String,
@@ -272,6 +273,76 @@ function spinRoulette() {
   return 80;                        // 1%
 }
 
+function checkMilestone(wonBets) {
+  const milestones = [
+    // Paliers 5-20 : +5€
+    { threshold: 5, reward: 5 },
+    { threshold: 10, reward: 5 },
+    { threshold: 15, reward: 5 },
+    { threshold: 20, reward: 5 },
+    // Paliers 30-50 : +8€
+    { threshold: 30, reward: 8 },
+    { threshold: 40, reward: 8 },
+    { threshold: 50, reward: 8 },
+    // Paliers 65-95 : +10€
+    { threshold: 65, reward: 10 },
+    { threshold: 80, reward: 10 },
+    { threshold: 95, reward: 10 },
+    // Paliers 115-190 : +15€
+    { threshold: 115, reward: 15 },
+    { threshold: 135, reward: 15 },
+    { threshold: 155, reward: 15 },
+    { threshold: 175, reward: 15 },
+    { threshold: 190, reward: 15 },
+    // Paliers 220-400 : +20€
+    { threshold: 220, reward: 20 },
+    { threshold: 250, reward: 20 },
+    { threshold: 280, reward: 20 },
+    { threshold: 310, reward: 20 },
+    { threshold: 340, reward: 20 },
+    { threshold: 370, reward: 20 },
+    { threshold: 400, reward: 20 },
+    // Paliers spéciaux
+    { threshold: 450, reward: 50 },
+    { threshold: 500, reward: 100 }
+  ];
+
+  return milestones.find(m => m.threshold === wonBets) || null;
+}
+
+function getNextMilestone(currentWonBets) {
+  const allMilestones = [5, 10, 15, 20, 30, 40, 50, 65, 80, 95, 115, 135, 155, 175, 190, 220, 250, 280, 310, 340, 370, 400, 450, 500];
+  return allMilestones.find(m => m > currentWonBets) || '500 (max)';
+}
+
+async function handleMilestone(user, channelId) {
+  const milestone = checkMilestone(user.stats.wonBets);
+  
+  if (milestone && !user.milestonesReached.includes(milestone.threshold)) {
+    user.balance += milestone.reward;
+    user.milestonesReached.push(milestone.threshold);
+    
+    // Annonce publique
+    try {
+      const channel = await client.channels.fetch(channelId);
+      const milestoneEmbed = new EmbedBuilder()
+        .setColor('#FFD700')
+        .setTitle('🎊🏆 PALIER ATTEINT ! 🏆🎊')
+        .setDescription(
+          `🎉 **<@${user.userId}>** vient d'atteindre le palier **${milestone.threshold} paris gagnés** !\n\n` +
+          `💰 **Récompense :** +${milestone.reward}€\n` +
+          `💳 **Nouveau solde :** ${user.balance}€`
+        )
+        .setFooter({ text: `🎯 Prochain palier : ${getNextMilestone(user.stats.wonBets)} paris gagnés` })
+        .setTimestamp();
+      
+      await channel.send({ embeds: [milestoneEmbed] });
+    } catch (error) {
+      console.error('Erreur annonce palier:', error);
+    }
+  }
+}
+
 // ==================== VÉRIFICATION DES COMBINÉS ====================
 
 async function checkCombisForBet(messageId, winningOptions) {
@@ -399,23 +470,29 @@ if (!isWinningBet) {
         combi.status = 'won';
         await combi.save();
 
-        const user = await getUser(combi.userId);
-        user.balance += combi.potentialWin;
-        user.stats.totalBets++;
-        user.stats.wonBets++;
-        
-        // ⭐ AJOUTER À L'HISTORIQUE
-        user.history.push({
-          betId: combi.combiId,
-          question: `Combiné ${combi.bets.length} matchs`,
-          option: `Cote ${combi.totalOdds.toFixed(2)}x`,
-          amount: combi.totalStake,
-          winnings: combi.potentialWin,
-          result: 'won',
-          timestamp: new Date()
-        });
-        
-        await user.save();
+const user = await getUser(combi.userId);
+user.balance += combi.potentialWin;
+user.stats.totalBets++;
+user.stats.wonBets++;
+
+// ⭐ AJOUTER À L'HISTORIQUE
+user.history.push({
+  betId: combi.combiId,
+  question: `Combiné ${combi.bets.length} matchs`,
+  option: `Cote ${combi.totalOdds.toFixed(2)}x`,
+  amount: combi.totalStake,
+  winnings: combi.potentialWin,
+  result: 'won',
+  timestamp: new Date()
+});
+
+// ⭐ VÉRIFICATION PALIER
+const bet = await Bet.findOne({ messageId: messageId });
+if (bet) {
+  await handleMilestone(user, bet.channelId);
+}
+
+await user.save();
 
         // ⭐ NOTIFICATION COMBINÉ COMPLET GAGNÉ
         const bet = await Bet.findOne({ messageId: messageId });
@@ -591,6 +668,10 @@ if (action === 'sor') {
       result: 'won',
       timestamp: new Date()
     });
+
+    // ⭐ VÉRIFICATION PALIER
+await handleMilestone(user, message.channel.id);
+    
     await user.save();
 
     // Supprimer la partie
@@ -685,6 +766,10 @@ if (action === 'sor') {
         result: 'won',
         timestamp: new Date()
       });
+      
+// ⭐ VÉRIFICATION PALIER
+await handleMilestone(user, message.channel.id);
+      
       await user.save();
 
       activeSafeOrRiskGames.delete(userId);
@@ -1224,6 +1309,18 @@ client.on('messageCreate', async (message) => {
         { name: '⚖️ Ratio', value: `${user.stats.wonBets}/${user.stats.lostBets}`, inline: true }
       )
       .setTimestamp();
+    // ⭐ AFFICHAGE DES PALIERS
+const milestonesText = user.milestonesReached && user.milestonesReached.length > 0
+  ? user.milestonesReached.sort((a, b) => b - a).slice(0, 5).map(m => `✅ ${m} paris`).join('\n')
+  : 'Aucun palier atteint';
+
+const nextMilestone = getNextMilestone(user.stats.wonBets);
+
+embed.addFields(
+  { name: '🏆 Derniers paliers', value: milestonesText, inline: true },
+  { name: '🎯 Prochain palier', value: `${nextMilestone} paris`, inline: true },
+  { name: '\u200b', value: '\u200b', inline: true }
+);
 
     if (recentHistory.length > 0) {
     let historyText = '';
@@ -3017,6 +3114,9 @@ for (const [userId, betData] of Object.entries(bettorsObj)) {
       result: 'won',
       timestamp: new Date()
     });
+
+    // ⭐ VÉRIFICATION PALIER
+await handleMilestone(user, bet.channelId);
 
     console.log(`✅ ${userId} a gagné ${winnings}€`);
   } else {
