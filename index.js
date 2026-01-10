@@ -3320,100 +3320,166 @@ if (command === '!mes-combis' || command === '!mc') {
   
 if (command === '!aide' || command === '!help') {
   const helpEmbed = new EmbedBuilder()
-    .setColor('#0099ff')
-    .setTitle('📚 Commandes du Bot de Paris')
-    .setDescription('Voici les commandes principales pour parier et suivre vos gains.')
+    .setColor('#FFD700')
+    .setTitle('⚡ PEACE & BET BOT ⚡')
+    .setDescription(
+      '**🎰 VIENS PARIER SUR TES MATCHS**\n' +
+      '**💰 AMASSE DE L\'ARGENT**\n' +
+      '**🏆 GRIMPE LE LADDER**\n\n' +
+      '💵 Tu commences avec **100€** au départ !'
+    )
     .addFields(
-      // ========== SECTION PARIS SIMPLES ==========
-      { name: '\u200b', value: '**💰 PARIS SIMPLES**', inline: false },
+      // ========== COMMANDES PRINCIPALES ==========
+      { 
+        name: '━━━━━━━━━━━━━━━━━━━━━', 
+        value: '**💎 COMMANDES PRINCIPALES**', 
+        inline: false 
+      },
       { 
         name: '🎲 Parier sur un match', 
-        value: '1. Trouvez un pari avec `!paris`\n2. Cliquez sur le bouton de l\'option choisie\n3. Entrez votre mise dans la fenêtre\n\n⚠️ **Un seul pari par match**' 
+        value: 
+          '**Option 1 :** Clique sur l\'emoji en réaction au pari\n' +
+          '**Option 2 :** `!pari [id] [option] [montant]`\n\n' +
+          '📋 Liste des paris : `!paris`\n' +
+          '📌 Exemple : `!pari 123456789 1 50`',
+        inline: false
       },
       { 
-  name: '!mes-paris', 
-  value: 'Voir vos paris simples en cours (avec gains potentiels)\n📢 Alias : `!mp`\n💡 Pour les combinés : `!mes-combis`'
-},
-      // ========== SECTION COMBINÉS ==========
-      { name: '\u200b', value: '**🎰 COMBINÉS** (Multipliez vos cotes !)', inline: false },
-      { 
-        name: '!combi-add', 
-        value: '**Créer un combiné de plusieurs matchs**\n\n' +
-               '📝 Format : `!combi-add <id1> <opt1> <id2> <opt2> ... <montant>`\n\n' +
-               '📌 Exemples :\n' +
-               '• 2 matchs : `!ca 123456 1 789012 2 100`\n' +
-               '• 3 matchs : `!ca 111 1 222 3 333 2 150`\n\n' +
-               '✅ Validez avec les boutons ✅/❌\n' +
-               '🔢 Alias : `!ca`'
+        name: '🎰 Créer un combiné', 
+        value: 
+          '`!combi-add [id1] [opt1] [id2] [opt2] ... [montant]`\n' +
+          '🔢 Alias : `!ca`\n\n' +
+          '💡 Jusqu\'à **10 matchs** dans un combiné !\n' +
+          '📈 Les cotes se **multiplient** !',
+        inline: false
       },
       { 
-        name: '!mes-combis', 
-        value: 'Voir vos 3 derniers combinés\n🔢 Alias : `!mc`'
-      },
-      { 
-        name: '!combi-cancel [id]', 
-        value: 'Annuler un combiné validé (si aucun match terminé)\n🔢 Alias : `!cc`'
-      },
-      
-      // ========== SECTION PROFIL ==========
-      { name: '\u200b', value: '**👤 PROFIL & STATS**', inline: false },
-      { 
-        name: '!solde', 
-        value: 'Votre solde, winrate et statistiques\n🔢 Alias : `!balance`'
-      },
-      { name: '!pari [id] [option] [montant]', value: 'Parier sans cliquer sur le bouton\n🔢 Alias : `!p`\nExemple: `!pari 123456789 1 50`\nUtilisez `!paris` pour voir les IDs' },
-      { 
-        name: '!profil [@user]', 
-        value: 'Profil détaillé avec historique (5 derniers paris)\n🔢 Alias : `!profile`, `!stats`'
-      },
-      { 
-        name: '!classement', 
-        value: 'Top 10 des joueurs (solde ou winrate)\n🔢 Alias : `!leaderboard`, `!top`'
-      },
-      
-      // ========== SECTION UTILITAIRES ==========
-      { name: '\u200b', value: '**🔧 UTILITAIRES**', inline: false },
-      { 
-        name: '!paris', 
-        value: 'Liste tous les paris actifs avec leurs IDs'
-      },
-      { 
-        name: '!don @user <montant>', 
-        value: 'Faire un don à un autre joueur\n📌 Ex : `!don @Jean 50`\n🔢 Alias : `!give`'
+        name: '📊 Consulter ton avancée', 
+        value: 
+          '• `!mes-paris` ou `!mp` → Tes paris en cours\n' +
+          '• `!mes-combis` ou `!mc` → Tes combinés\n' +
+          '• `!profil` → Ton profil détaillé\n' +
+          '• `!classement` → Compare-toi aux autres !',
+        inline: false
       },
 
-      // ========== SECTION MINI-JEUX ==========
-      { name: '\u200b', value: '**🎮 MINI-JEUX**', inline: false },
+      // ========== UTILITAIRES ==========
       { 
-        name: '!safe-or-risk [montant]', 
-        value: '🎲 **Jeu SAFE OR RISK** - Monte les tours ou encaisse !\n\n' +
-               '**Règles :**\n' +
-               '• Chaque tour = multiplicateur plus élevé\n' +
-               '• À chaque tour : ENCAISSER ou RISQUER\n' +
-               '• Plus tu montes, moins tu as de chance de réussir\n' +
-               '• Si tu exploses : tu perds TOUT\n' +
-               '• 10 tours max = JACKPOT x30 !\n\n' +
-               '📌 Exemple : `!safe-or-risk 100`\n' +
-               '🔢 Alias : `!sor`, `!risk`'
+        name: '━━━━━━━━━━━━━━━━━━━━━', 
+        value: '**🔧 UTILITAIRES**', 
+        inline: false 
       },
-      {
-                name: '!roulette', 
-                value: '🎰 Tourner la roue quotidienne pour gagner de l\'argent\n📢 Alias : `!spin`, `!roue`\n⏰ Une fois par jour'
-      },
-      
-      // ========== SECTION ADMIN (RÉDUITE) ==========
-      { name: '\u200b', value: `**⚙️ ADMIN** (Rôle : **${BETTING_CREATOR_ROLE}**)`, inline: false },
       { 
-        name: 'Commandes principales', 
-        value: '`!creer-pari` - Créer un pari\n' +
-               '`!boost` - Créer un pari boosté\n' +
-               '`!valider [id] [options]` - Valider un pari\n' +
-               '`!lock [id]` - Clôturer manuellement\n' +
-               '`!modifier-solde @user <montant>` - Modifier le solde\n' +
-               '`!annuler-tout` - Annuler tous les paris'
+        name: '💸 Aider un ami', 
+        value: 
+          '`!don @user [montant]`\n' +
+          '📌 Exemple : `!don @Jean 50`\n' +
+          '🔢 Alias : `!give`',
+        inline: true
+      },
+      { 
+        name: '❓ Aide', 
+        value: 
+          '`!help` ou `!aide`\n' +
+          'Affiche ce message',
+        inline: true
+      },
+      { 
+        name: '\u200b', 
+        value: '\u200b',
+        inline: true
+      },
+      { 
+        name: '🔥 Historique Winstreak', 
+        value: 
+          '`!streak-history` ou `!sh`\n' +
+          'Tes 5 dernières winstreaks',
+        inline: true
+      },
+      { 
+        name: '🏆 Top 5 Winstreaks', 
+        value: 
+          '`!topstreak` ou `!streaks`\n' +
+          'Les meilleures séries du serveur',
+        inline: true
+      },
+      { 
+        name: '💎 Top Cotes', 
+        value: 
+          '`!topcotes`\n' +
+          'Les meilleures cotes gagnées',
+        inline: true
+      },
+
+      // ========== MINI-JEUX ==========
+      { 
+        name: '━━━━━━━━━━━━━━━━━━━━━', 
+        value: '**🎮 MINI-JEUX**', 
+        inline: false 
+      },
+      { 
+        name: '🎰 Roulette Quotidienne', 
+        value: 
+          '`!roulette` 🔢 Alias : `!spin`, `!roue`\n\n' +
+          '⏰ **Une fois par jour**\n' +
+          '🎁 Tourne la roue et gagne de l\'argent !',
+        inline: false
+      },
+      { 
+        name: '💥 SAFE OR RISK', 
+        value: 
+          '`!safe-or-risk [montant]` 🔢 Alias : `!sor`, `!risk`\n\n' +
+          '**📋 RÈGLES :**\n' +
+          '• Chaque tour = **multiplicateur plus élevé**\n' +
+          '• À chaque tour : **ENCAISSER** 💰 ou **RISQUER** 🎲\n' +
+          '• Plus tu montes, **moins tu as de chance** de réussir\n' +
+          '• Si tu exploses : tu perds **TOUT** 💣\n' +
+          '• **10 tours max** = JACKPOT **x30** ! 🏆\n\n' +
+          '📌 Exemple : `!sor 100`',
+        inline: false
+      },
+
+      // ========== ADMIN ==========
+      { 
+        name: '━━━━━━━━━━━━━━━━━━━━━', 
+        value: `**⚙️ COMMANDES ADMIN** (Rôle : **${BETTING_CREATOR_ROLE}**)`, 
+        inline: false 
+      },
+      { 
+        name: '📝 Créer un pari', 
+        value: 
+          '`!creer-pari [question] | [opt1]:[cote1] | [opt2]:[cote2] | [heure]`\n' +
+          '📌 Ex : `!creer-pari PSG vs OM ? | PSG:2 | OM:3 | 21h30`',
+        inline: false
+      },
+      { 
+        name: '⚡ Créer un boost', 
+        value: 
+          '`!boost [event] | [cote] | [heure]`\n' +
+          '📌 Ex : `!boost Victoire PSG | 5.5 | 21h30`\n\n' +
+          '💎 **Pari spécial** avec cote élevée !',
+        inline: false
+      },
+      { 
+        name: '✅ Valider un pari', 
+        value: 
+          '`!valider [id] [options gagnantes]`\n' +
+          '📌 Ex : `!valider 123456789 1 3`\n\n' +
+          '🔥 Pour un boost perdu : `!boostperdu [id]`',
+        inline: false
+      },
+      { 
+        name: '🔧 Autres commandes admin', 
+        value: 
+          '• `!lock [id]` → Clôturer manuellement\n' +
+          '• `!modifier-solde @user [montant]` → Modifier un solde\n' +
+          '• `!annuler-tout` → Annuler tous les paris actifs',
+        inline: false
       }
     )
-    .setFooter({ text: '💡 Astuce : Les cotes se multiplient dans les combinés !' })
+    .setFooter({ 
+      text: '💡 Astuce : Dans un combiné, les cotes se multiplient ! | 🍀 Bonne chance !' 
+    })
     .setTimestamp();
 
   message.reply({ embeds: [helpEmbed] });
