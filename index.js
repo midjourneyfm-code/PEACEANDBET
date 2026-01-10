@@ -2147,42 +2147,39 @@ if (hoursMatch) {
     });
     await newBet.save();
 
-    let replyText = `⚡💎 **PARI BOOSTÉ CRÉÉ !** 💎⚡\n🆔 ID : \`${betMessage.id}\`\n\n_Validez avec_ \`!valider ${betMessage.id} 1\` _(si gagné)_`;
+let replyText = `⚡💎 **PARI BOOSTÉ CRÉÉ !** 💎⚡\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``;
     
-    if (closingTime) {
-      const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
-        timeZone: 'Europe/Paris',
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: false
-      });
-      replyText += `\n\n⏰ Clôture automatique à **${parisTimeStr}**`;
-      
-      const timeUntilClosing = closingTimestamp - Date.now();
-      if (timeUntilClosing > 0) {
-        setTimeout(async () => {
-          await closeBetAutomatically(betMessage.id);
-        }, timeUntilClosing);
-        
-        const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
-        if (oneHourBefore > 0) {
-          setTimeout(async () => {
-            await sendReminder(betMessage.id);
-          }, oneHourBefore);
-        }
-      }
+if (closingTime) {
+  const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+    timeZone: 'Europe/Paris',
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: false
+  });
+  replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${parisTimeStr}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
+  
+  const timeUntilClosing = closingTimestamp - Date.now();
+  if (timeUntilClosing > 0) {
+    setTimeout(async () => {
+      await closeBetAutomatically(betMessage.id);
+    }, timeUntilClosing);
+    
+    const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
+    if (oneHourBefore > 0) {
+      setTimeout(async () => {
+        await sendReminder(betMessage.id);
+      }, oneHourBefore);
     }
-
-    let mentionText = '';
-const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
-if (parieurRole) {
-  mentionText = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥\n\n`;
+  }
 }
 
-await betMessage.reply(mentionText + `⚡💎 **PARI BOOSTÉ CRÉÉ !** 💎⚡\n🆔 ID : \`${betMessage.id}\`\n\n_Validez avec_ \`!valider ${betMessage.id} 1\` _(si gagné)_`);
+// ⭐ Ajouter la mention @Parieur AVANT le message
+const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
+if (parieurRole) {
+  replyText = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥\n\n` + replyText;
+}
 
-    
-    message.reply(replyText);
+message.reply(replyText);
   }
 
   if (command === '!lock' || command === '!verrouiller') {
