@@ -1625,8 +1625,6 @@ try {
   const fallbackMsg = await message.reply({ embeds: [successEmbed] });
   setTimeout(() => fallbackMsg.delete().catch(() => {}), 10000);
 }
-
-    message.reply({ embeds: [successEmbed] });
   }
 
   if (command === '!paris') {
@@ -2935,6 +2933,113 @@ if (command === '!mes-combis' || command === '!mc') {
   }
 
   embed.setFooter({ text: '💡 Utilisez !combi-cancel [ID] pour annuler un combiné en cours' });
+
+  message.reply({ embeds: [embed] });
+}
+
+  if (command === '!topcotes' || command === '!bestcotes' || command === '!topcote') {
+  // Récupérer tous les utilisateurs
+  const allUsers = await User.find({
+    userId: { $regex: /^[0-9]{17,19}$/ }
+  });
+
+  // Récupérer tous les paris gagnés (simples + combinés uniquement, PAS Safe or Risk)
+  const allWinningBets = [];
+
+  for (const user of allUsers) {
+    if (!user.history || user.history.length === 0) continue;
+
+    for (const bet of user.history) {
+      // ❌ IGNORER Safe or Risk
+      if (bet.question && bet.question.includes('Safe or Risk')) continue;
+      
+      // ✅ Seulement les paris gagnés
+      if (bet.result !== 'won') continue;
+
+      // Calculer la cote réelle
+      const actualOdds = bet.amount > 0 ? (bet.winnings / bet.amount) : 0;
+
+      // Vérifier si c'est un combiné
+      const isCombi = bet.betId && bet.betId.startsWith('combi_');
+
+      allWinningBets.push({
+        userId: user.userId,
+        question: bet.question,
+        option: bet.option,
+        amount: bet.amount,
+        winnings: bet.winnings,
+        profit: bet.winnings - bet.amount,
+        odds: actualOdds,
+        timestamp: bet.timestamp,
+        isCombi: isCombi,
+        type: isCombi ? 'Combiné' : 'Paris simple'
+      });
+    }
+  }
+
+  // Trier par cote décroissante
+  allWinningBets.sort((a, b) => b.odds - a.odds);
+
+  // Prendre le top 3
+  const top3 = allWinningBets.slice(0, 3);
+
+  if (top3.length === 0) {
+    return message.reply('📊 Aucun pari gagné enregistré pour le moment.');
+  }
+
+  // Créer l'embed
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle('🏆 TOP 3 - Meilleures Cotes Gagnées')
+    .setDescription('Les paris avec les cotes les plus élevées qui ont été validés !\n')
+    .setTimestamp();
+
+  // Ajouter chaque pari du top 3
+  for (let i = 0; i < top3.length; i++) {
+    const bet = top3[i];
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+    const typeEmoji = bet.isCombi ? '🎰' : '💰';
+
+    let fieldName = `${medal} #${i + 1} - Cote **${bet.odds.toFixed(2)}x** ${typeEmoji}`;
+    
+    let fieldValue = `**👤 Joueur :** <@${bet.userId}>\n`;
+    fieldValue += `**📋 Type :** ${bet.type}\n`;
+    fieldValue += `**🎯 Match :** ${bet.question}\n`;
+    fieldValue += `**✅ Choix :** ${bet.option}\n`;
+    fieldValue += `**💰 Mise :** ${bet.amount}€\n`;
+    fieldValue += `**💎 Gain :** **${bet.winnings}€**\n`;
+    fieldValue += `**💸 Profit :** **+${bet.profit}€**\n`;
+    
+    if (bet.timestamp) {
+      fieldValue += `**📅 Date :** ${new Date(bet.timestamp).toLocaleDateString('fr-FR', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      })}`;
+    }
+
+    embed.addFields({
+      name: fieldName,
+      value: fieldValue,
+      inline: false
+    });
+  }
+
+  // Statistiques globales
+  const totalBetsCount = allWinningBets.length;
+  const avgOdds = (allWinningBets.reduce((sum, b) => sum + b.odds, 0) / totalBetsCount).toFixed(2);
+  const totalWinnings = allWinningBets.reduce((sum, b) => sum + b.winnings, 0);
+
+  embed.addFields({
+    name: '📊 Statistiques Globales',
+    value: 
+      `**Total de paris gagnés :** ${totalBetsCount}\n` +
+      `**Cote moyenne :** ${avgOdds}x\n` +
+      `**Total des gains :** ${totalWinnings}€`,
+    inline: false
+  });
+
+  embed.setFooter({ text: '💡 Continuez à parier pour entrer dans le classement !' });
 
   message.reply({ embeds: [embed] });
 }
