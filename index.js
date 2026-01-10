@@ -151,14 +151,14 @@ function calculatePotentialWin(amount, odds) {
 function getSafeOrRiskMultipliers() {
   return [
     { round: 1, multiplier: 1.1, winChance: 65 },
-    { round: 2, multiplier: 1.1, winChance: 65 },
-    { round: 3, multiplier: 1.5, winChance: 80 },
-    { round: 4, multiplier: 2.1, winChance: 80 },
-    { round: 5, multiplier: 3.5, winChance: 65 },
-    { round: 6, multiplier: 4.5, winChance: 55 },
-    { round: 7, multiplier: 8.1, winChance: 45 },
-    { round: 8, multiplier: 12.0, winChance: 35 },
-    { round: 9, multiplier: 18.0, winChance: 25 },
+    { round: 2, multiplier: 1.3, winChance: 60 },
+    { round: 3, multiplier: 1.5, winChance: 60 },
+    { round: 4, multiplier: 1.8, winChance: 60 },
+    { round: 5, multiplier: 2.1, winChance: 65 },
+    { round: 6, multiplier: 3.5, winChance: 55 },
+    { round: 7, multiplier: 4.5, winChance: 45 },
+    { round: 8, multiplier: 6.5, winChance: 35 },
+    { round: 9, multiplier: 12.5, winChance: 25 },
     { round: 10, multiplier: 30.0, winChance: 15 }
   ];
 }
