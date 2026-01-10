@@ -916,41 +916,70 @@ await handleMilestone(user, interaction.channel.id);
       await interaction.reply('✅ Pari annulé et tous les parieurs ont été remboursés.');
     }
 
-// Dans le bloc if (interaction.isButton()), ajoutez :
-if (action === 'quick' && params[0] === 'cancel' && params[1] === 'combi') {
-  const combiId = params[2];
-  
-  const combi = await Combi.findOne({ combiId, userId: interaction.user.id });
+  if (action === 'quick' && params[0] === 'cancel' && params[1] === 'combi') {
+    const combiId = params[2];
+    
+    console.log('🔍 Tentative d\'annulation combiné:', combiId);
+    
+    const combi = await Combi.findOne({ combiId, userId: interaction.user.id });
 
-  if (!combi) {
-    return interaction.reply({ content: '❌ Combiné introuvable.', ephemeral: true });
-  }
-
-  if (combi.status !== 'confirmed') {
-    return interaction.reply({ content: '❌ Ce combiné ne peut plus être annulé.', ephemeral: true });
-  }
-
-  // Vérifier qu'aucun pari n'est résolu
-  for (const bet of combi.bets) {
-    const betData = await Bet.findOne({ messageId: bet.messageId });
-    if (betData && betData.status === 'resolved') {
-      return interaction.reply({ content: '❌ Un match est déjà terminé.', ephemeral: true });
+    if (!combi) {
+      return interaction.reply({ content: '❌ Combiné introuvable ou vous n\'en êtes pas le propriétaire.', ephemeral: true });
     }
+
+    if (combi.status !== 'confirmed') {
+      return interaction.reply({ content: '❌ Ce combiné ne peut plus être annulé (statut: ' + combi.status + ').', ephemeral: true });
+    }
+
+    // Vérifier qu'aucun pari du combiné n'est résolu
+    for (const bet of combi.bets) {
+      const betData = await Bet.findOne({ messageId: bet.messageId });
+      if (betData && betData.status === 'resolved') {
+        return interaction.reply({ content: '❌ Impossible d\'annuler : au moins un match est déjà terminé.', ephemeral: true });
+      }
+    }
+
+    // Rembourser
+    const user = await getUser(interaction.user.id);
+    user.balance += combi.totalStake;
+    await user.save();
+
+    combi.status = 'cancelled';
+    await combi.save();
+
+    const embed = new EmbedBuilder()
+      .setColor('#FFA500')
+      .setTitle('🚫 Combiné Annulé')
+      .setDescription(`Votre combiné a été annulé avec succès.`)
+      .addFields(
+        { name: '💰 Montant remboursé', value: `${combi.totalStake}€`, inline: true },
+        { name: '💳 Nouveau solde', value: `${user.balance}€`, inline: true }
+      )
+      .setFooter({ text: `ID: ${combiId}` })
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    
+    console.log(`✅ Combiné ${combiId} annulé pour ${interaction.user.tag}`);
+    
+    // Désactiver le bouton dans le message original
+    try {
+      const disabledRow = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('disabled')
+            .setLabel('✅ Combiné annulé')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true)
+        );
+      
+      await interaction.message.edit({ components: [disabledRow] });
+    } catch (e) {
+      console.log('⚠️ Impossible de désactiver le bouton');
+    }
+    
+    return; // Important pour ne pas continuer le traitement
   }
-
-  // Rembourser
-  const user = await getUser(interaction.user.id);
-  user.balance += combi.totalStake;
-  await user.save();
-
-  combi.status = 'cancelled';
-  await combi.save();
-
-  await interaction.reply({ 
-    content: `✅ Combiné annulé ! Vous avez été remboursé de **${combi.totalStake}€**.\n💳 Nouveau solde : **${user.balance}€**`, 
-    ephemeral: true 
-  });
-}
 
     if (action === 'leaderboard') {
       const sortBy = params[0];
@@ -1547,17 +1576,46 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
     }
 
     // Confirmation privée
-    const successEmbed = new EmbedBuilder()
-      .setColor('#00FF00')
-      .setTitle('✅ Pari Placé !')
-      .setDescription(`Vous avez misé **${amount}€** sur **${bet.options[optionIndex].name}**`)
-      .addFields(
-        { name: 'Match', value: bet.question },
-        { name: 'Cote', value: `${odds}x`, inline: true },
-        { name: 'Gain potentiel', value: `${potentialWin}€`, inline: true },
-        { name: 'Profit potentiel', value: `+${potentialWin - amount}€`, inline: true },
-        { name: 'Nouveau solde', value: `${user.balance}€` }
-      );
+const successEmbed = new EmbedBuilder()
+  .setColor('#00FF00')
+  .setTitle('✅ Pari Placé !')
+  .setDescription(`Vous avez misé **${amount}€** sur **${bet.options[optionIndex].name}**`)
+  .addFields(
+    { name: '📊 Match', value: bet.question },
+    { name: '🎯 Cote', value: `${odds}x`, inline: true },
+    { name: '💎 Gain potentiel', value: `${potentialWin}€`, inline: true },
+    { name: '💸 Profit potentiel', value: `+${potentialWin - amount}€`, inline: true },
+    { name: '💳 Nouveau solde', value: `${user.balance}€`, inline: true }
+  );
+
+// Afficher la clôture si disponible
+if (bet.closingTime) {
+  const timeUntilClosing = new Date(bet.closingTime).getTime() - Date.now();
+  const minutesLeft = Math.floor(timeUntilClosing / 60000);
+  
+  if (minutesLeft > 0) {
+    successEmbed.addFields({
+      name: '⏰ Clôture des paris',
+      value: `Dans **${minutesLeft} minutes** (<t:${Math.floor(new Date(bet.closingTime).getTime() / 1000)}:R>)`,
+      inline: false
+    });
+  }
+}
+
+successEmbed.setFooter({ text: '🍀 Bonne chance ! Utilisez !mes-paris pour suivre vos paris' });
+
+// ✅ ENVOYER EN MESSAGE PRIVÉ (DM) au lieu de reply public
+try {
+  await message.author.send({ embeds: [successEmbed] });
+  // Confirmer avec un petit message public qui sera supprimé
+  const confirmMsg = await message.reply('✅ Pari enregistré ! Vérifiez vos messages privés pour le récapitulatif.');
+  setTimeout(() => confirmMsg.delete().catch(() => {}), 5000);
+} catch (error) {
+  // Si les DM sont fermés, envoyer en ephemeral (mais on ne peut pas avec message.reply)
+  // Donc on envoie juste un message court qui sera supprimé
+  const fallbackMsg = await message.reply({ embeds: [successEmbed] });
+  setTimeout(() => fallbackMsg.delete().catch(() => {}), 10000);
+}
 
     message.reply({ embeds: [successEmbed] });
   }
@@ -2803,7 +2861,8 @@ if (command === '!mes-combis' || command === '!mc') {
     let fieldValue = `**ID :** \`${combi.combiId}\`\n`; // 🆕 Afficher l'ID
     fieldValue += `**Statut :** ${statusEmoji} ${statusText}\n`;
     fieldValue += `**Mise :** ${combi.totalStake}€ | **Cote :** ${combi.totalOdds.toFixed(2)}x | **Gain potentiel :** ${combi.potentialWin}€\n`;
-    fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length} matchs résolus\n\n`;
+    fieldValue += `**Progression :** ${combi.resolvedBets}/${combi.bets.length}\n`;
+    fieldValue += `${createProgressBar(combi.resolvedBets, combi.bets.length)} ${Math.floor((combi.resolvedBets / combi.bets.length) * 100)}%\n\n`;
     
     fieldValue += `**📋 Paris du combiné :**\n`;
     
