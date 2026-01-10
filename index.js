@@ -587,16 +587,16 @@ client.once('ready', async () => {
 
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
-    const [action, betId, ...params] = interaction.customId.split('_');
+    const parts = interaction.customId.split('_');
+    const action = parts[0];
 
-    // ⭐ GESTION SPÉCIALE POUR LEADERBOARD (doit être AVANT les autres)
     if (action === 'leaderboard') {
-      const sortBy = parts[1]; // ⭐ CORRECTION : parts[1] au lieu de params[0]
+      const sortBy = parts[1];
       
-      console.log('🔘 Bouton leaderboard cliqué - Tri par:', sortBy);
+      console.log('📊 Tri du classement par:', sortBy);
       
       const users = await User.find({
-        userId: { $regex: /^[0-9]{17,19}$/ }
+        userId: { $regex: /^[0-9]{17,19}$/ } // ⭐ FILTRAGE DES IDs DISCORD VALIDES
       });
       
       const userList = users.map(u => ({
@@ -664,8 +664,8 @@ client.on('interactionCreate', async (interaction) => {
         );
 
       await interaction.update({ embeds: [embed], components: [row] });
-      console.log('✅ Classement mis à jour avec succès');
-      return; // ⭐ IMPORTANT : sortir de la fonction
+      console.log('✅ Classement mis à jour');
+      return;
     }
   }
 
