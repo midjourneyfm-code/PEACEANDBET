@@ -1636,6 +1636,56 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
   message.reply({ embeds: [embed] });
 }
 
+  // ⚠️ COMMANDE TEMPORAIRE - À SUPPRIMER APRÈS USAGE
+if (command === '!reset-database-admin') {
+  // ⚠️ SÉCURITÉ : Vérifier que c'est bien VOUS
+  if (message.author.id !== '525442874649608225') {
+    return message.reply('❌ Accès refusé.');
+  }
+
+  const confirmMsg = await message.reply('⚠️ **ATTENTION !** Cette commande va SUPPRIMER TOUTES LES DONNÉES.\nRéagissez avec ✅ dans les 30 secondes pour confirmer.');
+  
+  await confirmMsg.react('✅');
+  
+  const filter = (reaction, user) => reaction.emoji.name === '✅' && user.id === message.author.id;
+  const collector = confirmMsg.createReactionCollector({ filter, time: 30000, max: 1 });
+  
+  collector.on('collect', async () => {
+    try {
+      // Supprimer toutes les données
+      const deletedUsers = await User.deleteMany({});
+      const deletedBets = await Bet.deleteMany({});
+      const deletedCombis = await Combi.deleteMany({});
+      const deletedSpins = await DailySpin.deleteMany({});
+      
+      const embed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('🗑️ Base de données réinitialisée')
+        .addFields(
+          { name: 'Utilisateurs supprimés', value: `${deletedUsers.deletedCount}`, inline: true },
+          { name: 'Paris supprimés', value: `${deletedBets.deletedCount}`, inline: true },
+          { name: 'Combinés supprimés', value: `${deletedCombis.deletedCount}`, inline: true },
+          { name: 'Spins supprimés', value: `${deletedSpins.deletedCount}`, inline: true }
+        )
+        .setFooter({ text: '✅ Toutes les données ont été effacées. Redémarrez le bot.' })
+        .setTimestamp();
+      
+      await message.reply({ embeds: [embed] });
+      
+      console.log('🗑️ BASE DE DONNÉES RÉINITIALISÉE');
+    } catch (error) {
+      console.error('Erreur reset:', error);
+      message.reply('❌ Erreur lors de la réinitialisation.');
+    }
+  });
+  
+  collector.on('end', collected => {
+    if (collected.size === 0) {
+      confirmMsg.reply('⏱️ Temps écoulé. Réinitialisation annulée.');
+    }
+  });
+}
+
   if (command === '!streak-history' || command === '!sh') {
   const user = await getUser(message.author.id);
   
