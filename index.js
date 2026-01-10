@@ -1676,6 +1676,91 @@ if (command === '!annuler-tout' || command === '!cancelall') {
     await message.reply({ embeds: [confirmEmbed], components: [confirmRow] });
   }
 
+  if (command === '!mes-paris' || command === '!mp') {
+  const userId = message.author.id;
+  
+  // Récupérer tous les paris actifs
+  const activeBets = await Bet.find({ status: { $in: ['open', 'locked'] } });
+  
+  // Filtrer ceux où l'utilisateur a parié
+  const userBets = [];
+  
+  for (const bet of activeBets) {
+    const bettorsObj = bet.bettors instanceof Map 
+      ? Object.fromEntries(bet.bettors) 
+      : (bet.bettors || {});
+    
+    // Chercher le pari de l'utilisateur (pas de combiné)
+    for (const [bettorId, betData] of Object.entries(bettorsObj)) {
+      if (bettorId === userId && !betData.isCombi) {
+        userBets.push({
+          messageId: bet.messageId,
+          question: bet.question,
+          option: bet.options[betData.option].name,
+          optionIndex: betData.option,
+          amount: betData.amount,
+          odds: betData.odds,
+          potentialWin: Math.floor(betData.amount * betData.odds),
+          status: bet.status,
+          closingTime: bet.closingTime,
+          isBoosted: bet.isBoosted
+        });
+        break;
+      }
+    }
+  }
+  
+  if (userBets.length === 0) {
+    return message.reply('📭 Vous n\'avez aucun pari simple en cours.\n\n💡 Utilisez `!paris` pour voir les paris disponibles.');
+  }
+  
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle('📊 Vos Paris En Cours')
+    .setDescription(`Vous avez **${userBets.length}** pari(s) simple(s) en attente de résultat :\n`)
+    .setFooter({ text: '💡 Les combinés sont visibles avec !mes-combis' })
+    .setTimestamp();
+  
+  for (const userBet of userBets) {
+    const statusEmoji = userBet.status === 'locked' ? '🔒' : '🟢';
+    const statusText = userBet.status === 'locked' ? 'Clôturé (en cours)' : 'Ouvert';
+    const boostedTag = userBet.isBoosted ? ' ⚡ BOOSTÉ' : '';
+    const profit = userBet.potentialWin - userBet.amount;
+    
+    let fieldValue = `${statusEmoji} **Statut :** ${statusText}${boostedTag}\n`;
+    fieldValue += `💰 **Mise :** ${userBet.amount}€\n`;
+    fieldValue += `🎯 **Option :** ${userBet.option}\n`;
+    fieldValue += `📊 **Cote :** ${userBet.odds}x\n`;
+    fieldValue += `💎 **Gain potentiel :** **${userBet.potentialWin}€**\n`;
+    fieldValue += `💸 **Profit potentiel :** **+${profit}€**\n`;
+    
+    if (userBet.closingTime) {
+      fieldValue += `⏰ **Clôture :** <t:${Math.floor(new Date(userBet.closingTime).getTime() / 1000)}:R>\n`;
+    }
+    
+    fieldValue += `\n🆔 ID : \`${userBet.messageId}\``;
+    
+    embed.addFields({
+      name: `📌 ${userBet.question}`,
+      value: fieldValue,
+      inline: false
+    });
+  }
+  
+  // Calculer les totaux
+  const totalStaked = userBets.reduce((sum, bet) => sum + bet.amount, 0);
+  const totalPotential = userBets.reduce((sum, bet) => sum + bet.potentialWin, 0);
+  const totalProfit = totalPotential - totalStaked;
+  
+  embed.addFields({
+    name: '📈 Totaux',
+    value: `💰 Total misé : **${totalStaked}€**\n💎 Gain potentiel total : **${totalPotential}€**\n💸 Profit potentiel : **+${totalProfit}€**`,
+    inline: false
+  });
+  
+  message.reply({ embeds: [embed] });
+}
+
   if (command === '!creer-pari' || command === '!createbet') {
     const member = await message.guild.members.fetch(message.author.id);
     const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
@@ -1893,6 +1978,15 @@ if (command === '!annuler-tout' || command === '!cancelall') {
         }
       }
     }
+
+    let mentionText = '';
+const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
+if (parieurRole) {
+  mentionText = `${parieurRole} **Nouveau pari disponible !**\n\n`;
+}
+
+await betMessage.reply(mentionText + `✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``);
+
     
     message.reply(replyText);
   }
@@ -2081,6 +2175,15 @@ if (hoursMatch) {
         }
       }
     }
+
+    let mentionText = '';
+const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
+if (parieurRole) {
+  mentionText = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥\n\n`;
+}
+
+await betMessage.reply(mentionText + `⚡💎 **PARI BOOSTÉ CRÉÉ !** 💎⚡\n🆔 ID : \`${betMessage.id}\`\n\n_Validez avec_ \`!valider ${betMessage.id} 1\` _(si gagné)_`);
+
     
     message.reply(replyText);
   }
@@ -2587,7 +2690,10 @@ if (command === '!aide' || command === '!help') {
         name: '🎲 Parier sur un match', 
         value: '1. Trouvez un pari avec `!paris`\n2. Cliquez sur le bouton de l\'option choisie\n3. Entrez votre mise dans la fenêtre\n\n⚠️ **Un seul pari par match**' 
       },
-      
+      { 
+  name: '!mes-paris', 
+  value: 'Voir vos paris simples en cours (avec gains potentiels)\n📢 Alias : `!mp`\n💡 Pour les combinés : `!mes-combis`'
+},
       // ========== SECTION COMBINÉS ==========
       { name: '\u200b', value: '**🎰 COMBINÉS** (Multipliez vos cotes !)', inline: false },
       { 
@@ -2778,39 +2884,89 @@ if (action === 'validate') {
 
     console.log(`🏆 Nombre de gagnants: ${winners.length}`);
 
-    // CAS 1 : Aucun gagnant
-    if (winners.length === 0) {
-      await interaction.reply('⚠️ Aucun gagnant pour ce pari. Les mises sont perdues.');
-      
-      // Mettre à jour les stats de tous les parieurs (tous perdants)
-      for (const [userId, betData] of Object.entries(bettorsObj)) {
-        const user = await getUser(userId);
-        user.stats.totalBets++;
-        user.stats.lostBets++;
-        user.history.push({
-          betId: bet.messageId,
-          question: bet.question,
-          option: bet.options[betData.option].name,
-          amount: betData.amount,
-          winnings: 0,
-          result: 'lost',
-          timestamp: new Date()
-        });
-        await user.save();
-      }
-      
-      bet.status = 'resolved';
-      bet.winningOptions = winningOptions;
-      await bet.save();
-      
-      const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setColor('#FF0000')
-        .setTitle('📊 Pari Terminé - Aucun Gagnant');
-      
-      await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
-      await checkCombisForBet(betId, winningOptions);
-      return;
+// CAS 1 : Aucun gagnant
+if (winners.length === 0) {
+  await interaction.reply('⚠️ Aucun gagnant pour ce pari. Les mises sont perdues.');
+  
+  // Mettre à jour les stats de tous les parieurs (tous perdants)
+  for (const [userId, betData] of Object.entries(bettorsObj)) {
+    // IGNORER LES PARIEURS DE COMBINÉ
+    if (betData.isCombi || userId.includes('_combi')) {
+      continue;
     }
+    
+    const user = await getUser(userId);
+    user.stats.totalBets++;
+    user.stats.lostBets++;
+    user.history.push({
+      betId: bet.messageId,
+      question: bet.question,
+      option: bet.options[betData.option].name,
+      amount: betData.amount,
+      winnings: 0,
+      result: 'lost',
+      timestamp: new Date()
+    });
+    await user.save();
+  }
+  
+  bet.status = 'resolved';
+  bet.winningOptions = winningOptions;
+  await bet.save();
+  
+  const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+    .setColor('#FF0000')
+    .setTitle('📊 Pari Terminé - Aucun Gagnant');
+  
+  await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+  
+  // ⭐ VÉRIFIER LES COMBINÉS MÊME QUAND IL N'Y A PAS DE GAGNANTS
+  const combiNotifications = await checkCombisForBet(betId, winningOptions);
+  
+  // ⭐ AFFICHER LES COMBINÉS AFFECTÉS
+  if (combiNotifications && combiNotifications.length > 0) {
+    let combiText = '\n\n🎰 **Combinés affectés :**\n';
+    
+    for (const notif of combiNotifications) {
+      if (notif.type === 'won') {
+        combiText += `\n🏆🎉 <@${notif.userId}> : COMBINÉ GAGNANT ! (${notif.totalBets} matchs)`;
+        combiText += `\n   ├─ Mise : ${notif.stake}€`;
+        combiText += `\n   ├─ Cote : ${notif.odds.toFixed(2)}x`;
+        combiText += `\n   ├─ 💰 GAIN : **${notif.potentialWin}€**`;
+        combiText += `\n   └─ Profit : **+${notif.profit}€**`;
+        
+      } else if (notif.type === 'lost') {
+        combiText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.totalBets} matchs, ${notif.stake}€ perdus)`;
+        combiText += `\n   └─ Pari perdant : **${notif.question}** → ${notif.optionName}`;
+        
+      } else if (notif.type === 'progress') {
+        combiText += `\n✅ <@${notif.userId}> : Combiné en progression (${notif.resolved}/${notif.total})`;
+        combiText += `\n   ├─ **${notif.question}** → ${notif.optionName} ✅`;
+        combiText += `\n   └─ Gain potentiel : **${notif.potentialWin}€** (${notif.odds.toFixed(2)}x)`;
+      }
+    }
+    
+    await interaction.followUp(combiText);
+  }
+
+// ⭐ CALCULER ET AFFICHER LES MISES PERDUES
+let totalLost = 0;
+let losersCount = 0;
+
+for (const [userId, betData] of Object.entries(bettorsObj)) {
+  if (betData.isCombi || userId.includes('_combi')) {
+    continue;
+  }
+  totalLost += betData.amount;
+  losersCount++;
+}
+
+if (losersCount > 0) {
+  await interaction.followUp(`💸 **Mises perdues** : ${losersCount} parieur(s) ont perdu un total de **${totalLost}€**`);
+}
+  
+  return;
+}
 
 // CAS 2 : Il y a des gagnants
 let distributionText = '🏆 **Résultats du pari**\n\n';
