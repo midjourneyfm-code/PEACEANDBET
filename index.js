@@ -589,6 +589,84 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
 
+if (action === 'leaderboard') {
+  const sortBy = params[0];
+  
+  console.log('🔘 Bouton leaderboard cliqué - Tri par:', sortBy); // ⭐ DEBUG
+  
+  const users = await User.find({
+    userId: { $regex: /^[0-9]{17,19}$/ }
+  });
+  
+  const userList = users.map(u => ({
+    userId: u.userId,
+    balance: u.balance,
+    stats: u.stats,
+    winrate: u.stats.totalBets === 0 ? 0 : parseFloat(((u.stats.wonBets / u.stats.totalBets) * 100).toFixed(1))
+  }));
+
+  let sortedUsers;
+  let sortEmoji;
+  let sortLabel;
+  
+  if (sortBy === 'winrate') {
+    sortedUsers = userList.filter(u => u.stats.totalBets > 0).sort((a, b) => {
+      if (Math.abs(b.winrate - a.winrate) > 0.01) {
+        return b.winrate - a.winrate;
+      }
+      return b.stats.totalBets - a.stats.totalBets;
+    });
+    sortEmoji = '📊';
+    sortLabel = 'Winrate';
+  } else {
+    sortedUsers = userList.sort((a, b) => b.balance - a.balance);
+    sortEmoji = '💰';
+    sortLabel = 'Solde';
+  }
+
+  const top10 = sortedUsers.slice(0, 10);
+
+  let description = '';
+  for (let i = 0; i < top10.length; i++) {
+    const user = top10[i];
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+    description += `${medal} <@${user.userId}> — ${user.balance}€ (${user.winrate}% winrate, ${user.stats.totalBets} paris)\n`;
+  }
+
+  if (description === '') {
+    description = 'Aucun joueur avec des paris pour le moment.';
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle(`🏆 Classement des Parieurs`)
+    .setDescription(description)
+    .addFields(
+      { name: '📌 Trié par', value: `${sortEmoji} ${sortLabel}`, inline: true },
+      { name: '👥 Joueurs totaux', value: `${users.length}`, inline: true }
+    )
+    .setFooter({ text: 'Cliquez sur les boutons pour changer le tri' })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('leaderboard_solde')
+        .setLabel('Trier par Solde')
+        .setStyle(sortBy === 'solde' ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setEmoji('💰'),
+      new ButtonBuilder()
+        .setCustomId('leaderboard_winrate')
+        .setLabel('Trier par Winrate')
+        .setStyle(sortBy === 'winrate' ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setEmoji('📊')
+    );
+
+  await interaction.update({ embeds: [embed], components: [row] });
+  console.log('✅ Classement mis à jour avec succès'); // ⭐ DEBUG
+}
+  }
+
 if (action === 'sor') {
   // ⭐ CORRECTION : Le parsing était incorrect
   // customId format: "sor_continue_123456789" ou "sor_cashout_123456789" ou "sor_cancel_123456789"
@@ -979,80 +1057,6 @@ await handleMilestone(user, interaction.channel.id);
     }
     
     return; // Important pour ne pas continuer le traitement
-  }
-
-    if (action === 'leaderboard') {
-      const sortBy = params[0];
-      
-      const users = await User.find({
-        userId: { $regex: /^[0-9]{17,19}$/ } // ⭐ Garde seulement les vrais IDs Discord
-      });
-      const userList = users.map(u => ({
-        userId: u.userId,
-        balance: u.balance,
-        stats: u.stats,
-        winrate: u.stats.totalBets === 0 ? 0 : parseFloat(((u.stats.wonBets / u.stats.totalBets) * 100).toFixed(1))
-      }));
-
-      let sortedUsers;
-      let sortEmoji;
-      let sortLabel;
-      
-      if (sortBy === 'winrate') {
-        sortedUsers = userList.filter(u => u.stats.totalBets > 0).sort((a, b) => {
-          if (Math.abs(b.winrate - a.winrate) > 0.01) {
-            return b.winrate - a.winrate;
-          }
-          return b.stats.totalBets - a.stats.totalBets;
-        });
-        sortEmoji = '📊';
-        sortLabel = 'Winrate';
-      } else {
-        sortedUsers = userList.sort((a, b) => b.balance - a.balance);
-        sortEmoji = '💰';
-        sortLabel = 'Solde';
-      }
-
-      const top10 = sortedUsers.slice(0, 10);
-
-      let description = '';
-      for (let i = 0; i < top10.length; i++) {
-        const user = top10[i];
-        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
-        description += `${medal} <@${user.userId}> — ${user.balance}€ (${user.winrate}% winrate, ${user.stats.totalBets} paris)\n`;
-      }
-
-      if (description === '') {
-        description = 'Aucun joueur avec des paris pour le moment.';
-      }
-
-      const embed = new EmbedBuilder()
-        .setColor('#FFD700')
-        .setTitle(`🏆 Classement des Parieurs`)
-        .setDescription(description)
-        .addFields(
-          { name: '📌 Trié par', value: `${sortEmoji} ${sortLabel}`, inline: true },
-          { name: '👥 Joueurs totaux', value: `${users.length}`, inline: true }
-        )
-        .setFooter({ text: 'Cliquez sur les boutons pour changer le tri' })
-        .setTimestamp();
-
-      const row = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('leaderboard_solde')
-            .setLabel('Trier par Solde')
-            .setStyle(sortBy === 'solde' ? ButtonStyle.Success : ButtonStyle.Secondary)
-            .setEmoji('💰'),
-          new ButtonBuilder()
-            .setCustomId('leaderboard_winrate')
-            .setLabel('Trier par Winrate')
-            .setStyle(sortBy === 'winrate' ? ButtonStyle.Success : ButtonStyle.Secondary)
-            .setEmoji('📊')
-        );
-
-      await interaction.update({ embeds: [embed], components: [row] });
-    }
   }
 
   if (interaction.isModalSubmit()) {
