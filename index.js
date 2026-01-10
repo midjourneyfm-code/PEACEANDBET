@@ -412,11 +412,12 @@ if (!isWinningBet) {
 
   
 
+{
   // ⭐⭐⭐ ANNONCE PUBLIQUE (AJOUT MANQUANT) ⭐⭐⭐
   try {
-    const bet = await Bet.findOne({ messageId: messageId });
-    if (bet) {
-      const channel = await client.channels.fetch(bet.channelId);
+    const betRecord = await Bet.findOne({ messageId: messageId });
+    if (betRecord) {
+      const channel = await client.channels.fetch(betRecord.channelId);
       
       const lostEmbed = new EmbedBuilder()
         .setColor('#FF0000')
@@ -435,6 +436,7 @@ if (!isWinningBet) {
   } catch (error) {
     console.error('❌ Erreur annonce combiné perdu:', error);
   }
+}
   // ⭐⭐⭐ FIN DE L'AJOUT ⭐⭐⭐
 
   // Notification pour le message de validation (garder l'existant)
@@ -486,10 +488,12 @@ user.history.push({
   timestamp: new Date()
 });
 
-// ⭐ VÉRIFICATION PALIER
-const bet = await Bet.findOne({ messageId: messageId });
-if (bet) {
-  await handleMilestone(user, bet.channelId);
+{
+  // ⭐ VÉRIFICATION PALIER
+  const betRecord = await Bet.findOne({ messageId: messageId });
+  if (betRecord) {
+    await handleMilestone(user, betRecord.channelId);
+  }
 }
 
 await user.save();
@@ -670,7 +674,7 @@ if (action === 'sor') {
     });
 
     // ⭐ VÉRIFICATION PALIER
-await handleMilestone(user, message.channel.id);
+await handleMilestone(user, interaction.channel.id);
     
     await user.save();
 
@@ -768,7 +772,7 @@ await handleMilestone(user, message.channel.id);
       });
       
 // ⭐ VÉRIFICATION PALIER
-await handleMilestone(user, message.channel.id);
+await handleMilestone(user, interaction.channel.id);
       
       await user.save();
 
