@@ -475,15 +475,7 @@ function getNextMilestone(currentWonBets) {
 }
 
 async function handleMilestone(user, channelId) {
-  // ✅ COMPTER UNIQUEMENT LES PARIS SIMPLES ET COMBINÉS (PAS SAFE OR RISK)
-  const validWonBets = user.history ? user.history.filter(h => 
-    h.result === 'won' && 
-    h.question && // Vérifier que question existe
-    !h.question.includes('Safe or Risk') &&
-    (!h.betId || !h.betId.startsWith('sor_'))
-  ).length : 0;
-  
-  const milestone = checkMilestone(validWonBets);
+  const milestone = checkMilestone(user.stats.wonBets);
   
   if (milestone && !user.milestonesReached.includes(milestone.threshold)) {
     user.balance += milestone.reward;
@@ -500,7 +492,7 @@ async function handleMilestone(user, channelId) {
           `💰 **Récompense :** +${milestone.reward}€\n` +
           `💳 **Nouveau solde :** ${user.balance}€`
         )
-        .setFooter({ text: `🎯 Prochain palier : ${getNextMilestone(validWonBets)} paris gagnés` })
+        .setFooter({ text: `🎯 Prochain palier : ${getNextMilestone(user.stats.wonBets)} paris gagnés` })
         .setTimestamp();
       
       await channel.send({ embeds: [milestoneEmbed] });
@@ -854,9 +846,6 @@ if (action === 'sor') {
       timestamp: new Date()
     });
 
-    // ⭐ VÉRIFICATION PALIER
-await handleMilestone(user, interaction.channel.id);
-    
     await user.save();
 
     // Supprimer la partie
@@ -952,8 +941,6 @@ await handleMilestone(user, interaction.channel.id);
         timestamp: new Date()
       });
       
-// ⭐ VÉRIFICATION PALIER
-await handleMilestone(user, interaction.channel.id);
       
       await user.save();
 
@@ -1613,7 +1600,7 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
     ? user.milestonesReached.sort((a, b) => b - a).slice(0, 5).map(m => `✅ ${m} paris`).join('\n')
     : 'Aucun palier atteint';
 
-  const nextMilestone = getNextMilestone(validWonBets);
+  const nextMilestone = getNextMilestone(user.stats.wonBets);
 
   embed.addFields(
     { name: '🏆 Derniers paliers', value: milestonesText, inline: true },
@@ -3375,113 +3362,6 @@ if (command === '!mes-combis' || command === '!mc') {
 
   message.reply({ embeds: [embed] });
 }
-
-   if (command === '!sosaddiction' || command === '!sos' || command === '!teo') {
-    const sosEmbed = new EmbedBuilder()
-      .setColor('#FF0000')
-      .setTitle('🚨 SOS ADDICTION 🚨')
-      .setDescription(
-        '**⚠️ MESSAGE IMPORTANT ⚠️**\n\n' +
-        '**Ne soyez pas comme Téo !**\n\n' +
-        '🎲 Téo a tout perdu en pariant sans limite...\n' +
-        '💸 Il a cru pouvoir récupérer ses pertes...\n' +
-        '😔 Maintenant il regrette chaque jour.\n\n' +
-        '**📌 RÈGLES D\'OR :**\n' +
-        '✅ Ne pariez que ce que vous pouvez perdre\n' +
-        '✅ Fixez-vous des limites\n' +
-        '✅ Ne courez jamais après vos pertes\n' +
-        '✅ Le jeu reste un JEU, pas une source de revenus\n\n' +
-        '🆘 **Si vous sentez que vous perdez le contrôle :**\n' +
-        '➡️ Parlez-en à un ami\n' +
-        '➡️ Prenez une pause\n' +
-        '➡️ Contactez une association d\'aide\n\n' +
-        '**💬 "Je rejoue plus ce soir.. !sor 2" - Téo, 2026**'
-      )
-      .setFooter({ text: '🎮 Jouez responsable | 🛡️ Protégez-vous' })
-      .setTimestamp();
-
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setLabel('📞 Joueurs Info Service')
-          .setURL('https://www.joueurs-info-service.fr/')
-          .setStyle(ButtonStyle.Link)
-          .setEmoji('🆘')
-      );
-
-    message.reply({ embeds: [sosEmbed], components: [row] });
-  }
-
-    if (command === '!reset-paliers' || command === '!resetmilestones') {
-    const member = await message.guild.members.fetch(message.author.id);
-    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
-
-    if (!hasRole) {
-      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour réinitialiser les paliers.`);
-    }
-
-    // Récupérer tous les utilisateurs
-    const allUsers = await User.find({
-      userId: { $regex: /^[0-9]{17,19}$/ }
-    });
-
-    if (allUsers.length === 0) {
-      return message.reply('⚠️ Aucun utilisateur trouvé dans la base de données.');
-    }
-
-    let resetCount = 0;
-    let totalPaliersRemoved = 0;
-
-    // Réinitialiser les paliers de chaque utilisateur
-    for (const user of allUsers) {
-      const hadMilestones = user.milestonesReached && user.milestonesReached.length > 0;
-      
-      if (hadMilestones) {
-        totalPaliersRemoved += user.milestonesReached.length;
-        user.milestonesReached = []; // Vider le tableau des paliers atteints
-        await user.save();
-        resetCount++;
-      }
-    }
-
-    // Créer l'embed de confirmation
-    const embed = new EmbedBuilder()
-      .setColor('#FF6B00')
-      .setTitle('🔄 Paliers Réinitialisés')
-      .setDescription(
-        `Tous les paliers ont été réinitialisés avec succès.\n\n` +
-        `**Tout le monde repart à zéro !** 🎯`
-      )
-      .addFields(
-        { name: '👥 Utilisateurs affectés', value: `${resetCount}`, inline: true },
-        { name: '🏆 Paliers supprimés', value: `${totalPaliersRemoved}`, inline: true },
-        { name: '📊 Total utilisateurs', value: `${allUsers.length}`, inline: true }
-      )
-      .setFooter({ text: `Réinitialisé par ${message.author.tag}` })
-      .setTimestamp();
-
-    await message.reply({ embeds: [embed] });
-
-    // Annonce publique dans le canal
-    const announceEmbed = new EmbedBuilder()
-      .setColor('#FFA500')
-      .setTitle('📢 ANNONCE IMPORTANTE')
-      .setDescription(
-        `🔄 **Les paliers ont été réinitialisés !**\n\n` +
-        `Tous les joueurs repartent à **zéro paliers**.\n\n` +
-        `💡 **Pourquoi ?**\n` +
-        `Certains joueurs ont abusé du Safe or Risk pour farmer les paliers.\n` +
-        `Maintenant, seuls les **paris simples** et **combinés** comptent pour les paliers.\n\n` +
-        `**🎯 Nouveau départ pour tout le monde !**\n` +
-        `Que le meilleur gagne ! 🏆`
-      )
-      .setFooter({ text: '🎮 Jouez fair-play !' })
-      .setTimestamp();
-
-    await message.channel.send({ embeds: [announceEmbed] });
-
-    console.log(`🔄 Paliers réinitialisés par ${message.author.tag} - ${resetCount} utilisateurs affectés`);
-  }
   
 if (command === '!aide' || command === '!help') {
   const helpEmbed = new EmbedBuilder()
