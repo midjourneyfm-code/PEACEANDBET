@@ -2122,7 +2122,18 @@ if (hoursMatch) {
           .setEmoji('❌')
       );
 
-    const betMessage = await message.channel.send({ embeds: [embed], components: [row, adminRow] });
+   const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
+    let messageContent = '';
+    
+    if (parieurRole) {
+      messageContent = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥`;
+    }
+    
+    const betMessage = await message.channel.send({ 
+      content: messageContent,
+      embeds: [embed], 
+      components: [row, adminRow] 
+    });
 
     const finalRow = new ActionRowBuilder()
       .addComponents(
@@ -2142,7 +2153,11 @@ if (hoursMatch) {
           .setEmoji('❌')
       );
 
-    await betMessage.edit({ embeds: [embed], components: [finalRow, finalAdminRow] });
+    await betMessage.edit({ 
+      content: messageContent, 
+      embeds: [embed], 
+      components: [finalRow, finalAdminRow] 
+    });
 
     const newBet = new Bet({
       messageId: betMessage.id,
@@ -2161,37 +2176,24 @@ if (hoursMatch) {
     });
     await newBet.save();
 
-let replyText = `⚡💎 **PARI BOOSTÉ CRÉÉ !** 💎⚡\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``;
-    
-if (closingTime) {
-  const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
-    timeZone: 'Europe/Paris',
-    hour: '2-digit', 
-    minute: '2-digit',
-    hour12: false
-  });
-  replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${parisTimeStr}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
-  
-  const timeUntilClosing = closingTimestamp - Date.now();
-  if (timeUntilClosing > 0) {
-    setTimeout(async () => {
-      await closeBetAutomatically(betMessage.id);
-    }, timeUntilClosing);
-    
-    const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
-    if (oneHourBefore > 0) {
-      setTimeout(async () => {
-        await sendReminder(betMessage.id);
-      }, oneHourBefore);
+    // Configuration de la clôture automatique
+    if (closingTime) {
+      const timeUntilClosing = closingTimestamp - Date.now();
+      if (timeUntilClosing > 0) {
+        setTimeout(async () => {
+          await closeBetAutomatically(betMessage.id);
+        }, timeUntilClosing);
+        
+        const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
+        if (oneHourBefore > 0) {
+          setTimeout(async () => {
+            await sendReminder(betMessage.id);
+          }, oneHourBefore);
+        }
+      }
     }
-  }
-}
 
-// ⭐ Ajouter la mention @Parieur AVANT le message
-const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
-if (parieurRole) {
-  replyText = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥\n\n` + replyText;
-}
+    console.log(`⚡ Boost créé : ${betMessage.id} - ${eventName} (${oddsValue}x)`);
   }
 
   if (command === '!lock' || command === '!verrouiller') {
