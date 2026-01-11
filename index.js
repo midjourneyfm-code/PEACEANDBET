@@ -1987,7 +1987,7 @@ Sois direct, constructif et encourage le jeu responsable.`
       { name: '━━━━━ ⏰ ANALYSE TEMPORELLE ━━━━━', value: '\u200b', inline: false },
       { name: '🕐 Meilleure heure', value: `${bestHour}h (WR: ${bestHourWinrate.toFixed(1)}%)`, inline: true },
       { name: '📅 Meilleur jour', value: `${bestDay.name} (WR: ${((bestDay.won / (bestDay.total || 1)) * 100).toFixed(1)}%)`, inline: true },
-      { name: '🎲 Paris actifs', value: betsByHour[bestHour] ? betsByHour[bestHour].total : 0, inline: true }
+     { name: '🎲 Paris actifs', value: `${betsByHour[bestHour] ? betsByHour[bestHour].total : 0}`, inline: true }
     )
     .setFooter({ text: '💡 Utilisez !graph pour voir l\'évolution de votre solde' })
     .setTimestamp();
