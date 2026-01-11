@@ -144,6 +144,7 @@ const tempCombis = new Map(); // userId -> { bets: [], totalOdds: 1 }
 const activeSafeOrRiskGames = new Map(); // userId -> { stake, currentMultiplier, round, messageId }
 const activeTowerClimbGames = new Map(); // userId -> { stake, floor, multipliers, safeTiles, messageId }
 const activeLuckySlotsGames = new Map(); // userId -> { stake, spinning, messageId }
+const activePFCGames = new Map(); // userId -> { opponent, stake, creatorChoice, opponentChoice, messageId 
 
 // ==================== FONCTIONS UTILITAIRES ====================
 
@@ -165,6 +166,28 @@ async function getBalance(userId) {
 async function getStats(userId) {
   const user = await getUser(userId);
   return user.stats;
+}
+
+function determinePFCWinner(choice1, choice2) {
+  // Retourne : 'player1', 'player2', ou 'draw'
+  if (choice1 === choice2) return 'draw';
+  
+  const wins = {
+    'pierre': 'ciseaux',
+    'feuille': 'pierre',
+    'ciseaux': 'feuille'
+  };
+  
+  return wins[choice1] === choice2 ? 'player1' : 'player2';
+}
+
+function getPFCEmoji(choice) {
+  const emojis = {
+    'pierre': '🪨',
+    'feuille': '📄',
+    'ciseaux': '✂️'
+  };
+  return emojis[choice] || '❓';
 }
 
 async function trackBalanceChange(userId, newBalance, oldBalance, reason) {
@@ -4727,6 +4750,120 @@ if (command === '!mes-combis' || command === '!mc') {
 
   message.reply({ embeds: [embed] });
 }
+
+  if (command === '!pfc' || command === '!chifoumi' || command === '!shifumi') {
+  const mentionedUser = message.mentions.users.first();
+  const amount = parseInt(args[2]);
+
+  if (!mentionedUser || isNaN(amount) || amount <= 0) {
+    return message.reply(
+      '❌ **Format incorrect !**\n\n' +
+      '📋 **Usage :** `!pfc @adversaire [montant]`\n' +
+      '📌 **Exemple :** `!pfc @Jean 50`\n\n' +
+      '🎮 **Règles :**\n' +
+      '• Chaque joueur mise le **même montant**\n' +
+      '• 🪨 Pierre bat ✂️ Ciseaux\n' +
+      '• 📄 Feuille bat 🪨 Pierre\n' +
+      '• ✂️ Ciseaux bat 📄 Feuille\n' +
+      '• Le gagnant **rafle tout** ! 💰\n' +
+      '• En cas d\'égalité : **remboursement**\n\n' +
+      '🔢 **Alias :** `!chifoumi`, `!shifumi`'
+    );
+  }
+
+  if (mentionedUser.id === message.author.id) {
+    return message.reply('❌ Vous ne pouvez pas jouer contre vous-même !');
+  }
+
+  if (mentionedUser.bot) {
+    return message.reply('❌ Vous ne pouvez pas défier un bot !');
+  }
+
+  // Vérifier si un des joueurs a déjà une partie en cours
+  if (activePFCGames.has(message.author.id)) {
+    return message.reply('❌ Vous avez déjà une partie en cours ! Terminez-la d\'abord.');
+  }
+
+  if (activePFCGames.has(mentionedUser.id)) {
+    return message.reply(`❌ <@${mentionedUser.id}> a déjà une partie en cours !`);
+  }
+
+  // Vérifier le solde du créateur
+  const creator = await getUser(message.author.id);
+  if (creator.balance < amount) {
+    return message.reply(`❌ Solde insuffisant. Vous avez **${creator.balance}€**.`);
+  }
+
+  // Vérifier le solde de l'adversaire
+  const opponent = await getUser(mentionedUser.id);
+  if (opponent.balance < amount) {
+    return message.reply(`❌ <@${mentionedUser.id}> n'a pas assez d'argent (${opponent.balance}€).`);
+  }
+
+  // Créer l'embed de défi
+  const challengeEmbed = new EmbedBuilder()
+    .setColor('#FFA500')
+    .setTitle('🎮 PIERRE-FEUILLE-CISEAUX 🎮')
+    .setDescription(
+      `**<@${message.author.id}>** défie **<@${mentionedUser.id}>** !\n\n` +
+      `💰 **Mise :** ${amount}€ par joueur\n` +
+      `🏆 **Cagnotte totale :** ${amount * 2}€\n\n` +
+      `⏳ **En attente de la réponse de <@${mentionedUser.id}>...**`
+    )
+    .addFields(
+      { name: '🪨 Pierre', value: 'Bat les ciseaux', inline: true },
+      { name: '📄 Feuille', value: 'Bat la pierre', inline: true },
+      { name: '✂️ Ciseaux', value: 'Bat la feuille', inline: true }
+    )
+    .setFooter({ text: '⏱️ L\'adversaire a 60 secondes pour accepter' })
+    .setTimestamp();
+
+  const acceptRow = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`pfc_accept_${message.author.id}_${mentionedUser.id}_${amount}`)
+        .setLabel('✅ Accepter le défi')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`pfc_decline_${message.author.id}_${mentionedUser.id}`)
+        .setLabel('❌ Refuser')
+        .setStyle(ButtonStyle.Danger)
+    );
+
+  const challengeMsg = await message.reply({ 
+    content: `<@${mentionedUser.id}>`, 
+    embeds: [challengeEmbed], 
+    components: [acceptRow] 
+  });
+
+  // Créer la partie temporaire
+  activePFCGames.set(message.author.id, {
+    opponent: mentionedUser.id,
+    stake: amount,
+    messageId: challengeMsg.id,
+    status: 'pending',
+    createdAt: Date.now()
+  });
+
+  // Auto-annulation après 60 secondes
+  setTimeout(async () => {
+    const game = activePFCGames.get(message.author.id);
+    if (game && game.status === 'pending') {
+      activePFCGames.delete(message.author.id);
+      
+      const timeoutEmbed = EmbedBuilder.from(challengeEmbed)
+        .setColor('#808080')
+        .setDescription(
+          `~~**<@${message.author.id}>** défie **<@${mentionedUser.id}>** !~~\n\n` +
+          `⏱️ **Temps écoulé** - Défi annulé`
+        );
+
+      await challengeMsg.edit({ embeds: [timeoutEmbed], components: [] });
+    }
+  }, 60000);
+
+  console.log(`🎮 ${message.author.tag} défie ${mentionedUser.tag} en PFC (${amount}€)`);
+}
   
 if (command === '!aide' || command === '!help') {
   const helpEmbed = new EmbedBuilder()
@@ -5263,6 +5400,291 @@ if (combiNotifications && combiNotifications.length > 0) {
 await interaction.reply(distributionText);
 
 console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${totalDistributed}€ distribués`);
+}
+
+  if (action === 'pfc') {
+  const subaction = params[0];
+  const creatorId = params[1];
+  const opponentId = params[2];
+  const amount = params[3] ? parseInt(params[3]) : null;
+
+  // ACCEPTATION/REFUS DU DÉFI
+  if (subaction === 'accept' || subaction === 'decline') {
+    // Vérifier que c'est bien l'adversaire qui clique
+    if (interaction.user.id !== opponentId) {
+      return interaction.reply({ 
+        content: '❌ Ce défi ne vous est pas adressé !', 
+        ephemeral: true 
+      });
+    }
+
+    const game = activePFCGames.get(creatorId);
+    if (!game || game.status !== 'pending') {
+      return interaction.reply({ 
+        content: '❌ Ce défi n\'existe plus ou a expiré.', 
+        ephemeral: true 
+      });
+    }
+
+    if (subaction === 'decline') {
+      activePFCGames.delete(creatorId);
+      
+      const declineEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('❌ Défi Refusé')
+        .setDescription(`<@${opponentId}> a refusé le défi de <@${creatorId}>.`);
+
+      await interaction.update({ embeds: [declineEmbed], components: [] });
+      return;
+    }
+
+    // ACCEPTATION
+    const creator = await getUser(creatorId);
+    const opponent = await getUser(opponentId);
+
+    // Vérifier à nouveau les soldes
+    if (creator.balance < amount) {
+      activePFCGames.delete(creatorId);
+      return interaction.update({ 
+        content: `❌ <@${creatorId}> n'a plus assez d'argent (${creator.balance}€).`,
+        embeds: [], 
+        components: [] 
+      });
+    }
+
+    if (opponent.balance < amount) {
+      activePFCGames.delete(creatorId);
+      return interaction.update({ 
+        content: `❌ Vous n'avez plus assez d'argent (${opponent.balance}€).`,
+        embeds: [], 
+        components: [] 
+      });
+    }
+
+    // Déduire les mises
+    const oldCreatorBalance = creator.balance;
+    const oldOpponentBalance = opponent.balance;
+    
+    creator.balance -= amount;
+    opponent.balance -= amount;
+    
+    await creator.save();
+    await opponent.save();
+    
+    await trackBalanceChange(creatorId, creator.balance, oldCreatorBalance, 'pfc_bet');
+    await trackBalanceChange(opponentId, opponent.balance, oldOpponentBalance, 'pfc_bet');
+
+    // Mettre à jour la partie
+    game.status = 'choosing';
+    game.creatorChoice = null;
+    game.opponentChoice = null;
+
+    activePFCGames.set(creatorId, game);
+    activePFCGames.set(opponentId, game);
+
+    const gameEmbed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('🎮 PIERRE-FEUILLE-CISEAUX 🎮')
+      .setDescription(
+        `**<@${creatorId}>** VS **<@${opponentId}>**\n\n` +
+        `💰 **Mise :** ${amount}€ par joueur\n` +
+        `🏆 **Cagnotte :** ${amount * 2}€\n\n` +
+        `⏳ **En attente des choix...**\n` +
+        `Utilisez les boutons ci-dessous pour choisir !`
+      )
+      .setFooter({ text: 'Votre choix reste secret jusqu\'à ce que les deux joueurs aient choisi' })
+      .setTimestamp();
+
+    const choiceRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`pfc_choice_${creatorId}_pierre`)
+          .setLabel('🪨 Pierre')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`pfc_choice_${creatorId}_feuille`)
+          .setLabel('📄 Feuille')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`pfc_choice_${creatorId}_ciseaux`)
+          .setLabel('✂️ Ciseaux')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    await interaction.update({ embeds: [gameEmbed], components: [choiceRow] });
+
+    console.log(`✅ ${opponentId} accepte le défi PFC contre ${creatorId}`);
+  }
+
+  // CHOIX DU JOUEUR
+  if (subaction === 'choice') {
+    const gameCreatorId = params[1];
+    const choice = params[2]; // pierre, feuille, ou ciseaux
+
+    const game = activePFCGames.get(gameCreatorId);
+    if (!game || game.status !== 'choosing') {
+      return interaction.reply({ 
+        content: '❌ Cette partie n\'existe plus.', 
+        ephemeral: true 
+      });
+    }
+
+    const isCreator = interaction.user.id === gameCreatorId;
+    const isOpponent = interaction.user.id === game.opponent;
+
+    if (!isCreator && !isOpponent) {
+      return interaction.reply({ 
+        content: '❌ Vous ne participez pas à cette partie !', 
+        ephemeral: true 
+      });
+    }
+
+    // Enregistrer le choix
+    if (isCreator) {
+      if (game.creatorChoice) {
+        return interaction.reply({ 
+          content: '❌ Vous avez déjà fait votre choix !', 
+          ephemeral: true 
+        });
+      }
+      game.creatorChoice = choice;
+    } else {
+      if (game.opponentChoice) {
+        return interaction.reply({ 
+          content: '❌ Vous avez déjà fait votre choix !', 
+          ephemeral: true 
+        });
+      }
+      game.opponentChoice = choice;
+    }
+
+    // Confirmer le choix en privé
+    await interaction.reply({ 
+      content: `✅ Votre choix : **${getPFCEmoji(choice)} ${choice.toUpperCase()}**`, 
+      ephemeral: true 
+    });
+
+    // Vérifier si les deux ont choisi
+    if (game.creatorChoice && game.opponentChoice) {
+      // RÉSOLUTION DE LA PARTIE
+      const winner = determinePFCWinner(game.creatorChoice, game.opponentChoice);
+      
+      const creator = await getUser(gameCreatorId);
+      const opponent = await getUser(game.opponent);
+
+      let resultEmbed;
+      let winnerId, loserId;
+
+      if (winner === 'draw') {
+        // ÉGALITÉ - Remboursement
+        const oldCreatorBalance = creator.balance;
+        const oldOpponentBalance = opponent.balance;
+        
+        creator.balance += game.stake;
+        opponent.balance += game.stake;
+        
+        await creator.save();
+        await opponent.save();
+        
+        await trackBalanceChange(gameCreatorId, creator.balance, oldCreatorBalance, 'pfc_draw');
+        await trackBalanceChange(game.opponent, opponent.balance, oldOpponentBalance, 'pfc_draw');
+
+        resultEmbed = new EmbedBuilder()
+          .setColor('#808080')
+          .setTitle('🤝 ÉGALITÉ !')
+          .setDescription(
+            `**<@${gameCreatorId}>** : ${getPFCEmoji(game.creatorChoice)} **${game.creatorChoice.toUpperCase()}**\n` +
+            `**<@${game.opponent}>** : ${getPFCEmoji(game.opponentChoice)} **${game.opponentChoice.toUpperCase()}**\n\n` +
+            `🔄 **Aucun gagnant !** Chaque joueur récupère sa mise de **${game.stake}€**.`
+          )
+          .addFields(
+            { name: '💳 Solde de ' + creator.userId, value: `${creator.balance}€`, inline: true },
+            { name: '💳 Solde de ' + opponent.userId, value: `${opponent.balance}€`, inline: true }
+          )
+          .setTimestamp();
+
+      } else {
+        // IL Y A UN GAGNANT
+        winnerId = winner === 'player1' ? gameCreatorId : game.opponent;
+        loserId = winner === 'player1' ? game.opponent : gameCreatorId;
+        
+        const winnerUser = await getUser(winnerId);
+        const loserUser = await getUser(loserId);
+        
+        const oldWinnerBalance = winnerUser.balance;
+        winnerUser.balance += (game.stake * 2);
+        
+        winnerUser.stats.totalBets++;
+        winnerUser.stats.wonBets++;
+        
+        loserUser.stats.totalBets++;
+        loserUser.stats.lostBets++;
+        
+        winnerUser.history.push({
+          betId: `pfc_${Date.now()}`,
+          question: `PFC vs <@${loserId}>`,
+          option: `${getPFCEmoji(winner === 'player1' ? game.creatorChoice : game.opponentChoice)} ${winner === 'player1' ? game.creatorChoice : game.opponentChoice}`,
+          amount: game.stake,
+          winnings: game.stake * 2,
+          result: 'won',
+          timestamp: new Date()
+        });
+        
+        loserUser.history.push({
+          betId: `pfc_${Date.now()}`,
+          question: `PFC vs <@${winnerId}>`,
+          option: `${getPFCEmoji(winner === 'player2' ? game.creatorChoice : game.opponentChoice)} ${winner === 'player2' ? game.creatorChoice : game.opponentChoice}`,
+          amount: game.stake,
+          winnings: 0,
+          result: 'lost',
+          timestamp: new Date()
+        });
+        
+        await winnerUser.save();
+        await loserUser.save();
+        
+        await trackBalanceChange(winnerId, winnerUser.balance, oldWinnerBalance, 'pfc_won');
+
+        resultEmbed = new EmbedBuilder()
+          .setColor('#FFD700')
+          .setTitle('🏆 VICTOIRE !')
+          .setDescription(
+            `**<@${gameCreatorId}>** : ${getPFCEmoji(game.creatorChoice)} **${game.creatorChoice.toUpperCase()}**\n` +
+            `**<@${game.opponent}>** : ${getPFCEmoji(game.opponentChoice)} **${game.opponentChoice.toUpperCase()}**\n\n` +
+            `🎉 **<@${winnerId}>** remporte **${game.stake * 2}€** !\n` +
+            `💸 **Profit :** +${game.stake}€`
+          )
+          .addFields(
+            { name: '🏆 Gagnant', value: `<@${winnerId}>`, inline: true },
+            { name: '💰 Nouveau solde', value: `${winnerUser.balance}€`, inline: true }
+          )
+          .setTimestamp();
+      }
+
+      // Supprimer les parties
+      activePFCGames.delete(gameCreatorId);
+      activePFCGames.delete(game.opponent);
+
+      await interaction.message.edit({ embeds: [resultEmbed], components: [] });
+
+      console.log(`🎮 PFC résolu : ${game.creatorChoice} vs ${game.opponentChoice} - Winner: ${winner}`);
+    } else {
+      // Un joueur a choisi, on attend l'autre
+      const waitingFor = game.creatorChoice ? game.opponent : gameCreatorId;
+      
+      const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+        .setDescription(
+          `**<@${gameCreatorId}>** VS **<@${game.opponent}>**\n\n` +
+          `💰 **Mise :** ${game.stake}€ par joueur\n` +
+          `🏆 **Cagnotte :** ${game.stake * 2}€\n\n` +
+          `${game.creatorChoice ? '✅' : '⏳'} <@${gameCreatorId}> ${game.creatorChoice ? 'a choisi' : 'réfléchit...'}\n` +
+          `${game.opponentChoice ? '✅' : '⏳'} <@${game.opponent}> ${game.opponentChoice ? 'a choisi' : 'réfléchit...'}\n\n` +
+          `⏳ **En attente de <@${waitingFor}>...**`
+        );
+
+      await interaction.message.edit({ embeds: [updatedEmbed] });
+    }
+  }
 }
 
     if (action === 'combi') {
