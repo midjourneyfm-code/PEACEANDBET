@@ -540,13 +540,13 @@ function createTowerClimbEmbed(game, floorData) {
 
 function getSlotSymbols() {
   return [
-    { symbol: '🍒', name: 'Cerise', multiplier: 1.5, weight: 30 },
-    { symbol: '🍋', name: 'Citron', multiplier: 1.8, weight: 25 },
-    { symbol: '🍊', name: 'Orange', multiplier: 2, weight: 20 },
-    { symbol: '🍇', name: 'Raisin', multiplier: 2.5, weight: 15 },
-    { symbol: '🔔', name: 'Cloche', multiplier: 3, weight: 7 },
-    { symbol: '💎', name: 'Diamant', multiplier: 5, weight: 2 },
-    { symbol: '7️⃣', name: 'Sept', multiplier: 20, weight: 1 }
+    { symbol: '🍒', name: 'Cerise', multiplier: 2, weight: 30 },
+    { symbol: '🍋', name: 'Citron', multiplier: 3, weight: 25 },
+    { symbol: '🍊', name: 'Orange', multiplier: 5, weight: 20 },
+    { symbol: '🍇', name: 'Raisin', multiplier: 7, weight: 15 },
+    { symbol: '🔔', name: 'Cloche', multiplier: 10, weight: 7 },
+    { symbol: '💎', name: 'Diamant', multiplier: 15, weight: 2 },
+    { symbol: '7️⃣', name: 'Sept', multiplier: 30, weight: 1 }
   ];
 }
 
@@ -576,14 +576,19 @@ function calculateSlotWin(slot1, slot2, slot3, stake) {
     };
   }
   
-  // 2 symboles identiques
+  // 2 symboles identiques - récupération de la mise + moitié du multiplicateur
   if (slot1.symbol === slot2.symbol || slot2.symbol === slot3.symbol || slot1.symbol === slot3.symbol) {
     const matchSymbol = slot1.symbol === slot2.symbol ? slot1 : (slot2.symbol === slot3.symbol ? slot2 : slot1);
-    const multiplier = matchSymbol.multiplier * 0.3;
+    
+    // Formule : mise * (1 + multiplicateur/2)
+    // Ex: Citron x3, mise 100€ → 100 * (1 + 3/2) = 100 * 2.5 = 250€
+    const halfMultiplier = matchSymbol.multiplier / 2;
+    const totalMultiplier = 1 + halfMultiplier; // Récupération mise + moitié gain
+    
     return {
-      win: Math.floor(stake * multiplier),
+      win: Math.floor(stake * totalMultiplier),
       type: 'double',
-      message: `💰 Double ${matchSymbol.name} !`
+      message: `💰 Double ${matchSymbol.name} ! (x${totalMultiplier})`
     };
   }
   
@@ -627,7 +632,7 @@ async function canPlaceToday(userId) {
   return { canPlace: true, hoursUntil: 0 };
 }
 
-async function distributeInterests() {
+async function distributeInterests(isTest = false) {
   try {
     const placements = await Placement.find({ amount: { $gt: 0 } });
     const now = new Date();
@@ -644,13 +649,33 @@ async function distributeInterests() {
         continue;
       }
       
-      const placedDate = new Date(placement.placedAt);
-      const minPlacementTime = new Date(today);
-      minPlacementTime.setHours(minPlacementTime.getHours() - 3);
-      
-      if (placedDate > minPlacementTime) {
-        console.log(`⏰ ${placement.userId} a placé trop tard, skip`);
-        continue;
+      // Vérifier que le placement a été fait avant 21h LA VEILLE
+           // ⭐ BYPASS POUR LES TESTS ADMIN
+      if (!isTest) {
+        // Vérifier que le placement a été fait avant 21h LA VEILLE
+        const placedDate = new Date(placement.placedAt);
+        
+        // Calculer 21h du jour PRÉCÉDENT
+        const cutoffTime = new Date(today);
+        cutoffTime.setDate(cutoffTime.getDate() - 1); // Jour d'avant
+        cutoffTime.setHours(21, 0, 0, 0); // 21h
+        
+        if (placedDate < cutoffTime) {
+          console.log(`⏰ ${placement.userId} a placé avant la dernière fenêtre de 21h, skip`);
+          continue;
+        }
+        
+        // Vérifier qu'il n'a pas placé APRÈS 21h hier (donc trop tard)
+        const yesterdayCutoff = new Date(today);
+        yesterdayCutoff.setDate(yesterdayCutoff.getDate() - 1);
+        yesterdayCutoff.setHours(21, 0, 0, 0);
+        
+        if (placedDate > yesterdayCutoff) {
+          // Placé après 21h hier = OK, on distribue
+          // (Car placé entre 21h hier et minuit aujourd'hui)
+        }
+      } else {
+        console.log(`🧪 MODE TEST - Bypass des vérifications horaires pour ${placement.userId}`);
       }
       
       const interestRate = calculateRandomInterest();
@@ -1508,6 +1533,12 @@ if (action === 'sor') {
         activeLuckySlotsGames.delete(userId);
 
         const color = result.win > 0 ? (result.type === 'jackpot' ? '#FFD700' : '#00FF00') : '#FF0000';
+                const profitText = result.win > 0 
+          ? (result.type === 'double' 
+              ? `💎 **Gain :** **${result.win}€**\n💸 **Profit :** **+${result.win - game.stake}€** (mise récupérée + bonus)`
+              : `💎 **Gain :** **${result.win}€**\n💸 **Profit :** **+${result.win - game.stake}€**`)
+          : `💸 **Perte :** -${game.stake}€`;
+
         const resultEmbed = new EmbedBuilder()
           .setColor(color)
           .setTitle('🎰 LUCKY SLOTS 🎰')
@@ -1519,11 +1550,8 @@ if (action === 'sor') {
             `\`\`\`\n\n` +
             `${result.message}\n\n` +
             `💰 **Mise :** ${game.stake}€\n` +
-            (result.win > 0 ? 
-              `💎 **Gain :** **${result.win}€**\n` +
-              `💸 **Profit :** **+${result.win - game.stake}€**\n` :
-              `💸 **Perte :** -${game.stake}€\n`) +
-            `\n💳 **Solde actuel :** ${user.balance}€`
+            `${profitText}\n\n` +
+            `💳 **Solde actuel :** ${user.balance}€`
           )
           .setFooter({ text: '🎰 Rejouez avec !slots [montant]' })
           .setTimestamp();
@@ -2438,12 +2466,16 @@ if (command === '!graph' || command === '!graphique') {
 // === ANALYSE PAR TYPE DE PARI ===
 const combiBets = allHistory.filter(h => h.betId && h.betId.startsWith('combi_'));
 const sorBets = allHistory.filter(h => h.betId && h.betId.startsWith('sor_'));
+const towerBets = allHistory.filter(h => h.betId && h.betId.startsWith('tower_'));
+const slotsBets = allHistory.filter(h => h.betId && h.betId.startsWith('slots_'));
+const placementBets = allHistory.filter(h => h.betId && h.betId.startsWith('placement_'));
 const simpleBets = allHistory.filter(h => {
-  // Exclure les combinés ET les Safe or Risk
   const isCombi = h.betId && h.betId.startsWith('combi_');
   const isSor = h.betId && h.betId.startsWith('sor_');
-  const isSorByQuestion = h.question && h.question.includes('Safe or Risk');
-  return !isCombi && !isSor && !isSorByQuestion;
+  const isTower = h.betId && h.betId.startsWith('tower_');
+  const isSlots = h.betId && h.betId.startsWith('slots_');
+  const isPlacement = h.betId && h.betId.startsWith('placement_');
+  return !isCombi && !isSor && !isTower && !isSlots && !isPlacement;
 });
 
 const combiWinrate = combiBets.length > 0 
@@ -2456,6 +2488,18 @@ const simpleWinrate = simpleBets.length > 0
 
 const sorWinrate = sorBets.length > 0
   ? ((sorBets.filter(b => b.result === 'won').length / sorBets.length) * 100).toFixed(1)
+  : 0;
+
+    const towerWinrate = towerBets.length > 0
+  ? ((towerBets.filter(b => b.result === 'won').length / towerBets.length) * 100).toFixed(1)
+  : 0;
+
+const slotsWinrate = slotsBets.length > 0
+  ? ((slotsBets.filter(b => b.result === 'won').length / slotsBets.length) * 100).toFixed(1)
+  : 0;
+
+const placementWinrate = placementBets.length > 0
+  ? ((placementBets.filter(b => b.result === 'won').length / placementBets.length) * 100).toFixed(1)
   : 0;
   
   // === ÉVOLUTION DU SOLDE (7 derniers jours) ===
@@ -2506,10 +2550,12 @@ const sorWinrate = sorBets.length > 0
       { name: '📊 Ratio gain/mise', value: `${(avgWin / avgBet).toFixed(2)}x`, inline: true },
       
       { name: '━━━━━ 🎰 TYPE DE PARIS ━━━━━', value: '\u200b', inline: false },
-      { name: '📝 Paris simples', value: `${simpleBets.length} (WR: ${simpleWinrate}%)`, inline: true },
+      { name: '🔹 Paris simples', value: `${simpleBets.length} (WR: ${simpleWinrate}%)`, inline: true },
       { name: '🎰 Combinés', value: `${combiBets.length} (WR: ${combiWinrate}%)`, inline: true },
       { name: '🎲 Safe or Risk', value: `${sorBets.length} (WR: ${sorWinrate}%)`, inline: true },
-      { name: '🏆 Type favori', value: simpleWinrate > combiWinrate ? 'Paris simples' : 'Combinés', inline: true },
+      { name: '🏗️ Tower Climb', value: `${towerBets.length} (WR: ${towerWinrate}%)`, inline: true },
+      { name: '🎰 Lucky Slots', value: `${slotsBets.length} (WR: ${slotsWinrate}%)`, inline: true },
+      { name: '💰 Placements', value: `${placementBets.length} gains`, inline: true },
       
       { name: '━━━━━ ⏰ ANALYSE TEMPORELLE ━━━━━', value: '\u200b', inline: false },
       { name: '🕐 Meilleure heure', value: `${bestHour}h (WR: ${bestHourWinrate.toFixed(1)}%)`, inline: true },
@@ -4645,8 +4691,7 @@ if (command === '!aide' || command === '!help') {
         inline: true
       },
 
-      // ========== MINI-JEUX ==========
-      { 
+           { 
         name: '━━━━━━━━━━━━━━━━━━━━━', 
         value: '**🎮 MINI-JEUX**', 
         inline: false 
@@ -4654,7 +4699,7 @@ if (command === '!aide' || command === '!help') {
       { 
         name: '🎰 Roulette Quotidienne', 
         value: 
-          '`!roulette` 🔢 Alias : `!spin`, `!roue`\n\n' +
+          '`!roulette` 📢 Alias : `!spin`, `!roue`\n\n' +
           '⏰ **Une fois par jour**\n' +
           '🎁 Tourne la roue et gagne de l\'argent !',
         inline: false
@@ -4662,14 +4707,50 @@ if (command === '!aide' || command === '!help') {
       { 
         name: '💥 SAFE OR RISK', 
         value: 
-          '`!safe-or-risk [montant]` 🔢 Alias : `!sor`, `!risk`\n\n' +
+          '`!safe-or-risk [montant]` 📢 Alias : `!sor`, `!risk`\n\n' +
           '**📋 RÈGLES :**\n' +
-          '• Chaque tour = **multiplicateur plus élevé**\n' +
+          '• 10 tours avec multiplicateurs croissants\n' +
           '• À chaque tour : **ENCAISSER** 💰 ou **RISQUER** 🎲\n' +
-          '• Plus tu montes, **moins tu as de chance** de réussir\n' +
-          '• Si tu exploses : tu perds **TOUT** 💣\n' +
-          '• **10 tours max** = JACKPOT **x30** ! 🏆\n\n' +
-          '📌 Exemple : `!sor 100`',
+          '• Plus tu montes, moins tu as de chances\n' +
+          '• **Explosion = TOUT PERDU** 💥\n' +
+          '• Tour 10 = **x30** ! 🏆',
+        inline: false
+      },
+      { 
+        name: '🏗️ TOWER CLIMB', 
+        value: 
+          '`!tower [montant]` 📢 Alias : `!climb`\n\n' +
+          '**📋 RÈGLES :**\n' +
+          '• Grimpe une tour de **15 étages**\n' +
+          '• Choisis 1 tuile parmi 3 (2 sûres, 1 piégée)\n' +
+          '• Encaisse quand tu veux\n' +
+          '• **Tuile piégée = BOOM** 💥\n' +
+          '• Sommet = **x50** ! 🏆',
+        inline: false
+      },
+      { 
+        name: '🎰 LUCKY SLOTS', 
+        value: 
+          '`!slots [montant]` 📢 Alias : `!slot`, `!machine`\n\n' +
+          '**📋 RÈGLES :**\n' +
+          '• Machine à sous à 3 rouleaux\n' +
+          '• **3 symboles identiques = JACKPOT**\n' +
+          '• **2 symboles identiques = 30% du jackpot**\n' +
+          '• 7️⃣ x3 = **x50** ! 💎 x3 = **x20** !',
+        inline: false
+      },
+      { 
+        name: '💰 Placement Bancaire', 
+        value: 
+          '`!placement placer [montant]` 📢 Alias : `!place`, `!invest`\n\n' +
+          '**📋 RÈGLES :**\n' +
+          '• Reçois des **intérêts quotidiens** à minuit\n' +
+          '• Taux entre **1% et 10%** (5% probable)\n' +
+          '• ⚠️ Place **avant 21h**\n' +
+          '• Annule avant minuit avec `!placement-cancel`\n\n' +
+          '**💡 Autres commandes :**\n' +
+          '• `!placement info` - Voir ton statut\n' +
+          '• `!placement historique` - Tes gains passés',
         inline: false
       },
 
