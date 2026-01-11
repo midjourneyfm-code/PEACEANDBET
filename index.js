@@ -37,7 +37,7 @@ const userSchema = new mongoose.Schema({
       option: String,
       amount: Number,
       winnings: Number,
-      type: String, // 'simple' ou 'combi'
+      betType: { type: String },  // ⭐ RENOMMÉ de "type" à "betType"
       timestamp: Date
     }]
   }],
@@ -295,6 +295,17 @@ async function closeBetAutomatically(messageId) {
 
 async function handleWinstreak(user, channelId, betDetails) {
   // betDetails = { question, option, amount, winnings, type: 'simple' ou 'combi' }
+  const betEntry = {
+  question: String(betDetails.question || 'N/A'),
+  option: String(betDetails.option || 'N/A'),
+  amount: Number(betDetails.amount || 0),
+  winnings: Number(betDetails.winnings || 0),
+  betType: String(betDetails.type || 'simple'),  // ⭐ RENOMMÉ
+  timestamp: new Date()
+};
+
+// Pousser dans le tableau bets de la streak
+currentStreakRecord.bets.push(betEntry);
   
   const oldStreak = user.currentStreak;
   user.currentStreak++;
