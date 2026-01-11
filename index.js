@@ -144,7 +144,6 @@ const tempCombis = new Map(); // userId -> { bets: [], totalOdds: 1 }
 const activeSafeOrRiskGames = new Map(); // userId -> { stake, currentMultiplier, round, messageId }
 const activeTowerClimbGames = new Map(); // userId -> { stake, floor, multipliers, safeTiles, messageId }
 const activeLuckySlotsGames = new Map(); // userId -> { stake, spinning, messageId }
-const activePFCGames = new Map(); // userId -> { stake, mode, rounds, wins, losses, currentRound }
 
 // ==================== FONCTIONS UTILITAIRES ====================
 
@@ -191,46 +190,6 @@ async function calculateWinrate(userId) {
 
 function calculatePotentialWin(amount, odds) {
   return Math.floor(amount * odds);
-}
-
-function getPFCModes() {
-  return [
-    { mode: 'simple', name: 'Simple', rounds: 1, multiplier: 1.8, description: '1 manche' },
-    { mode: 'bo3', name: 'Best of 3', rounds: 3, multiplier: 2.5, description: 'Premier à 2 victoires' },
-    { mode: 'bo5', name: 'Best of 5', rounds: 5, multiplier: 3.5, description: 'Premier à 3 victoires' }
-  ];
-}
-
-function pfcWinner(playerChoice, botChoice) {
-  if (playerChoice === botChoice) return 'draw';
-  
-  const winning = {
-    'pierre': 'ciseaux',
-    'feuille': 'pierre',
-    'ciseaux': 'feuille'
-  };
-  
-  return winning[playerChoice] === botChoice ? 'player' : 'bot';
-}
-
-function createPFCEmbed(game, mode) {
-  const embed = new EmbedBuilder()
-    .setColor('#FF6B00')
-    .setTitle('✊✋✌️ PIERRE FEUILLE CISEAUX')
-    .setDescription(
-      `**Mode :** ${mode.name} (${mode.description})\n\n` +
-      `💰 **Mise :** ${game.stake}€\n` +
-      `📊 **Multiplicateur :** x${mode.multiplier}\n` +
-      `💎 **Gain potentiel :** **${Math.floor(game.stake * mode.multiplier)}€**\n\n` +
-      `**🎯 Score actuel :**\n` +
-      `👤 Vous : ${game.wins} | 🤖 Bot : ${game.losses}\n` +
-      `📍 Manche ${game.currentRound}/${mode.rounds}\n\n` +
-      `**Choisissez votre coup !**`
-    )
-    .setFooter({ text: `⚡ ${mode.rounds === 1 ? 'Une seule chance !' : `Premier à ${Math.ceil(mode.rounds / 2)} victoires !`}` })
-    .setTimestamp();
-
-  return embed;
 }
 
 function getSafeOrRiskMultipliers() {
@@ -1609,173 +1568,6 @@ if (action === 'sor') {
         console.log(`🎰 ${interaction.user.tag} : ${slot1.symbol} ${slot2.symbol} ${slot3.symbol} - ${result.win > 0 ? `+${result.win}€` : `perdu`}`);
       }
     }
-
-    if (action === 'pfc') {
-  const choice = interaction.customId.split('_')[1]; // pierre, feuille, ciseaux
-  const userId = interaction.customId.split('_')[2];
-
-  if (interaction.user.id !== userId) {
-    return interaction.reply({ content: '❌ Ce jeu n\'est pas le vôtre !', ephemeral: true });
-  }
-
-  const game = activePFCGames.get(userId);
-
-  if (!game) {
-    return interaction.reply({ content: '❌ Partie introuvable.', ephemeral: true });
-  }
-
-  await interaction.deferUpdate();
-
-  // Le bot choisit
-  const choices = ['pierre', 'feuille', 'ciseaux'];
-  const botChoice = choices[Math.floor(Math.random() * 3)];
-
-  // Déterminer le gagnant
-  const result = pfcWinner(choice, botChoice);
-
-  const emojis = {
-    'pierre': '✊',
-    'feuille': '✋',
-    'ciseaux': '✌️'
-  };
-
-  let resultText = `\n**🎯 Manche ${game.currentRound} :**\n`;
-  resultText += `👤 Vous : ${emojis[choice]} **${choice.toUpperCase()}**\n`;
-  resultText += `🤖 Bot : ${emojis[botChoice]} **${botChoice.toUpperCase()}**\n\n`;
-
-  if (result === 'player') {
-    game.wins++;
-    resultText += '✅ **VOUS GAGNEZ LA MANCHE !**';
-  } else if (result === 'bot') {
-    game.losses++;
-    resultText += '❌ **LE BOT GAGNE LA MANCHE !**';
-  } else {
-    resultText += '🟡 **ÉGALITÉ ! Rejouez.**';
-  }
-
-  const modes = getPFCModes();
-  const mode = modes.find(m => m.mode === game.mode);
-  const winsNeeded = Math.ceil(mode.rounds / 2);
-
-  // Vérifier si la partie est terminée
-  const gameOver = game.wins >= winsNeeded || game.losses >= winsNeeded;
-
-  if (!gameOver && result !== 'draw') {
-    game.currentRound++;
-  }
-
-  if (gameOver) {
-    const user = await getUser(userId);
-    const won = game.wins > game.losses;
-
-    if (won) {
-      const winnings = Math.floor(game.stake * mode.multiplier);
-      const profit = winnings - game.stake;
-
-      user.balance += winnings;
-      user.stats.totalBets++;
-      user.stats.wonBets++;
-      user.history.push({
-        betId: `pfc_${Date.now()}`,
-        question: `PFC ${mode.name}`,
-        option: `${game.wins}-${game.losses}`,
-        amount: game.stake,
-        winnings: winnings,
-        result: 'won',
-        timestamp: new Date()
-      });
-
-      await user.save();
-      await trackBalanceChange(userId, user.balance, user.balance - winnings, 'pfc_won');
-
-      const winEmbed = new EmbedBuilder()
-        .setColor('#00FF00')
-        .setTitle('🎉 VICTOIRE ! 🎉')
-        .setDescription(
-          resultText + '\n\n' +
-          `**🏆 VOUS AVEZ GAGNÉ LA PARTIE !**\n\n` +
-          `**Score final :** ${game.wins} - ${game.losses}\n\n` +
-          `💰 **Mise :** ${game.stake}€\n` +
-          `📊 **Multiplicateur :** x${mode.multiplier}\n` +
-          `💎 **GAIN :** **${winnings}€**\n` +
-          `💸 **Profit :** **+${profit}€**\n\n` +
-          `💳 **Nouveau solde :** ${user.balance}€`
-        )
-        .setFooter({ text: '✊✋✌️ Rejouez avec !pfc [mode] [montant]' })
-        .setTimestamp();
-
-      await interaction.editReply({ embeds: [winEmbed], components: [] });
-    } else {
-      user.stats.totalBets++;
-      user.stats.lostBets++;
-      user.history.push({
-        betId: `pfc_${Date.now()}`,
-        question: `PFC ${mode.name}`,
-        option: `${game.wins}-${game.losses}`,
-        amount: game.stake,
-        winnings: 0,
-        result: 'lost',
-        timestamp: new Date()
-      });
-
-      await user.save();
-
-      const loseEmbed = new EmbedBuilder()
-        .setColor('#FF0000')
-        .setTitle('😢 DÉFAITE')
-        .setDescription(
-          resultText + '\n\n' +
-          `**❌ VOUS AVEZ PERDU LA PARTIE**\n\n` +
-          `**Score final :** ${game.wins} - ${game.losses}\n\n` +
-          `💸 **Mise perdue :** ${game.stake}€\n` +
-          `💳 **Solde actuel :** ${user.balance}€`
-        )
-        .setFooter({ text: '🔄 Retentez votre chance avec !pfc [mode] [montant]' })
-        .setTimestamp();
-
-      await interaction.editReply({ embeds: [loseEmbed], components: [] });
-    }
-
-    activePFCGames.delete(userId);
-    console.log(`✊ ${interaction.user.tag} termine PFC : ${won ? 'victoire' : 'défaite'} (${game.wins}-${game.losses})`);
-  } else {
-    // Partie continue
-    const continueEmbed = new EmbedBuilder()
-      .setColor('#FFA500')
-      .setTitle('✊✋✌️ PIERRE FEUILLE CISEAUX')
-      .setDescription(
-        `**Mode :** ${mode.name}\n\n` +
-        resultText + '\n\n' +
-        `**📊 Score :**\n` +
-        `👤 Vous : ${game.wins} | 🤖 Bot : ${game.losses}\n` +
-        `📍 Manche ${game.currentRound}/${mode.rounds}\n\n` +
-        `**Choisissez votre prochain coup !**`
-      )
-      .setFooter({ text: `Premier à ${winsNeeded} victoires !` })
-      .setTimestamp();
-
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`pfc_pierre_${userId}`)
-          .setLabel('Pierre')
-          .setStyle(ButtonStyle.Secondary)
-          .setEmoji('✊'),
-        new ButtonBuilder()
-          .setCustomId(`pfc_feuille_${userId}`)
-          .setLabel('Feuille')
-          .setStyle(ButtonStyle.Success)
-          .setEmoji('✋'),
-        new ButtonBuilder()
-          .setCustomId(`pfc_ciseaux_${userId}`)
-          .setLabel('Ciseaux')
-          .setStyle(ButtonStyle.Danger)
-          .setEmoji('✌️')
-      );
-
-    await interaction.editReply({ embeds: [continueEmbed], components: [row] });
-  }
-}
     
     if (action === 'bet') {
       const optionIndex = parseInt(params[0]);
@@ -4591,6 +4383,152 @@ if (bet.isBoosted) {
   message.reply({ embeds: [embed] });
 }
 
+  if (command === '!pari-annuler' || command === '!pa') {
+  const betMessageId = args[1];
+
+  if (!betMessageId) {
+    return message.reply(
+      '❌ **Format incorrect !**\n\n' +
+      '📋 **Usage :** `!pari-annuler [id]`\n' +
+      '📌 **Exemple :** `!pari-annuler 123456789`\n\n' +
+      '💡 Utilisez `!mes-paris` pour voir les IDs de vos paris.\n' +
+      '🔢 **Alias :** `!pa`\n\n' +
+      '⚠️ **Restrictions :**\n' +
+      '• Le pari ne doit **pas être clôturé**\n' +
+      '• Le pari ne doit **pas être résolu**'
+    );
+  }
+
+  // Récupérer le pari
+  const bet = await Bet.findOne({ messageId: betMessageId });
+
+  if (!bet) {
+    return message.reply(
+      `❌ Pari introuvable : \`${betMessageId}\`\n\n` +
+      `Utilisez \`!mes-paris\` pour voir vos paris actifs.`
+    );
+  }
+
+  // Vérifier le statut du pari
+  if (bet.status === 'resolved') {
+    return message.reply(
+      `❌ **Ce pari est déjà résolu !**\n\n` +
+      `Match : "${bet.question}"\n` +
+      `Vous ne pouvez plus annuler votre participation.`
+    );
+  }
+
+  if (bet.status === 'cancelled') {
+    return message.reply(
+      `❌ **Ce pari a été annulé par l'admin.**\n\n` +
+      `Match : "${bet.question}"\n` +
+      `Vous avez normalement déjà été remboursé.`
+    );
+  }
+
+  // ⚠️ AUTORISER L'ANNULATION MÊME SI LE PARI EST LOCKED
+  // (Car le match n'est pas encore résolu)
+
+  // Vérifier que l'utilisateur a bien parié sur ce match
+  const bettorsObj = bet.bettors instanceof Map 
+    ? Object.fromEntries(bet.bettors) 
+    : (bet.bettors || {});
+
+  if (!bettorsObj[message.author.id]) {
+    return message.reply(
+      `❌ **Vous n'avez pas parié sur ce match !**\n\n` +
+      `Match : "${bet.question}"\n` +
+      `Utilisez \`!mes-paris\` pour voir vos paris actifs.`
+    );
+  }
+
+  const userBet = bettorsObj[message.author.id];
+
+  // ⚠️ VÉRIFIER SI C'EST UN PARI DE COMBINÉ
+  if (userBet.isCombi) {
+    return message.reply(
+      `❌ **Ce pari fait partie d'un combiné !**\n\n` +
+      `Match : "${bet.question}"\n` +
+      `Pour annuler, utilisez \`!combi-cancel ${userBet.combiId}\`\n\n` +
+      `💡 Voir vos combinés : \`!mes-combis\``
+    );
+  }
+
+  // Rembourser l'utilisateur
+  const user = await getUser(message.author.id);
+  const refundAmount = userBet.amount;
+  const oldBalance = user.balance;
+  
+  user.balance += refundAmount;
+  await user.save();
+  await trackBalanceChange(message.author.id, user.balance, oldBalance, 'bet_cancelled_by_user');
+
+  // Retirer l'utilisateur de la liste des parieurs
+  delete bettorsObj[message.author.id];
+  
+  // Mettre à jour le pari dans la DB
+  await Bet.findOneAndUpdate(
+    { messageId: betMessageId },
+    { 
+      $set: { bettors: bettorsObj },
+      $inc: { totalPool: -refundAmount }
+    }
+  );
+
+  // Mettre à jour le message Discord
+  try {
+    const channel = await client.channels.fetch(bet.channelId);
+    const betMessage = await channel.messages.fetch(betMessageId);
+    
+    const updatedBet = await Bet.findOne({ messageId: betMessageId });
+    const bettorsCount = Object.keys(updatedBet.bettors).length;
+    
+    // Reconstituer l'embed avec les nouvelles valeurs
+    const fields = betMessage.embeds[0].fields.filter(f => 
+      !['📈 Statut', '💵 Total des mises', '👥 Parieurs'].includes(f.name)
+    );
+    
+    const statusValue = bet.status === 'locked' 
+      ? '🔒 Clôturé (en attente de validation)' 
+      : '🟢 En cours';
+    
+    fields.push(
+      { name: '📈 Statut', value: statusValue, inline: true },
+      { name: '💵 Total des mises', value: `${updatedBet.totalPool}€`, inline: true },
+      { name: '👥 Parieurs', value: `${bettorsCount}`, inline: true }
+    );
+    
+    const updatedEmbed = EmbedBuilder.from(betMessage.embeds[0]).setFields(fields);
+    await betMessage.edit({ embeds: [updatedEmbed] });
+    
+    await betMessage.reply(
+      `ℹ️ **<@${message.author.id}>** a annulé son pari de **${refundAmount}€** sur **${bet.options[userBet.option].name}**`
+    );
+  } catch (error) {
+    console.error('Erreur mise à jour message:', error);
+  }
+
+  // Confirmation à l'utilisateur
+  const confirmEmbed = new EmbedBuilder()
+    .setColor('#FFA500')
+    .setTitle('✅ Pari Annulé')
+    .setDescription(
+      `Vous avez annulé votre pari sur le match :\n\n` +
+      `📊 **${bet.question}**`
+    )
+    .addFields(
+      { name: '🎯 Votre choix', value: bet.options[userBet.option].name, inline: true },
+      { name: '💰 Mise remboursée', value: `${refundAmount}€`, inline: true },
+      { name: '💳 Nouveau solde', value: `${user.balance}€`, inline: true }
+    )
+    .setFooter({ text: 'Vous pouvez parier à nouveau si le pari est toujours ouvert' })
+    .setTimestamp();
+
+  message.reply({ embeds: [confirmEmbed] });
+
+  console.log(`🚫 ${message.author.tag} annule son pari de ${refundAmount}€ sur ${betMessageId}`);
+}
+
 if (command === '!mes-combis' || command === '!mc') {
   const combis = await Combi.find({ userId: message.author.id }).sort({ createdAt: -1 }).limit(3);
 
@@ -4807,87 +4745,6 @@ if (command === '!mes-combis' || command === '!mc') {
   embed.setFooter({ text: '💡 Continuez à parier pour entrer dans le classement !' });
 
   message.reply({ embeds: [embed] });
-}
-
-  if (command === '!pfc' || command === '!pierre-feuille-ciseaux' || command === '!shifumi') {
-  const modeArg = args[1] || 'simple';
-  const amount = parseInt(args[2]);
-
-  const modes = getPFCModes();
-  const selectedMode = modes.find(m => m.mode === modeArg.toLowerCase());
-
-  if (!selectedMode) {
-    return message.reply(
-      '❌ **Mode invalide !**\n\n' +
-      '📋 **Usage :** `!pfc [mode] [montant]`\n\n' +
-      '**Modes disponibles :**\n' +
-      '• `simple` - 1 manche (x1.8)\n' +
-      '• `bo3` - Best of 3 (x2.5)\n' +
-      '• `bo5` - Best of 5 (x3.5)\n\n' +
-      '📌 **Exemples :**\n' +
-      '`!pfc simple 50`\n' +
-      '`!pfc bo3 100`\n\n' +
-      '🔢 **Alias :** `!pierre-feuille-ciseaux`, `!shifumi`'
-    );
-  }
-
-  if (!amount || isNaN(amount) || amount <= 0) {
-    return message.reply(`❌ Montant invalide.\n**Usage :** \`!pfc ${selectedMode.mode} [montant]\``);
-  }
-
-  if (activePFCGames.has(message.author.id)) {
-    return message.reply('❌ Vous avez déjà une partie en cours !');
-  }
-
-  const user = await getUser(message.author.id);
-  if (user.balance < amount) {
-    return message.reply(`❌ Solde insuffisant. Vous avez **${user.balance}€**.`);
-  }
-
-  // Déduire la mise
-  const oldBalance = user.balance;
-  user.balance -= amount;
-  await user.save();
-  await trackBalanceChange(message.author.id, user.balance, oldBalance, 'pfc_bet');
-
-  // Créer la partie
-  const game = {
-    stake: amount,
-    mode: selectedMode.mode,
-    rounds: selectedMode.rounds,
-    wins: 0,
-    losses: 0,
-    currentRound: 1,
-    userId: message.author.id
-  };
-
-  const embed = createPFCEmbed(game, selectedMode);
-
-  const row = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`pfc_pierre_${message.author.id}`)
-        .setLabel('Pierre')
-        .setStyle(ButtonStyle.Secondary)
-        .setEmoji('✊'),
-      new ButtonBuilder()
-        .setCustomId(`pfc_feuille_${message.author.id}`)
-        .setLabel('Feuille')
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('✋'),
-      new ButtonBuilder()
-        .setCustomId(`pfc_ciseaux_${message.author.id}`)
-        .setLabel('Ciseaux')
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('✌️')
-    );
-
-  const gameMessage = await message.reply({ embeds: [embed], components: [row] });
-  
-  game.messageId = gameMessage.id;
-  activePFCGames.set(message.author.id, game);
-
-  console.log(`✊ ${message.author.tag} lance PFC ${selectedMode.mode} avec ${amount}€`);
 }
   
 if (command === '!aide' || command === '!help') {
