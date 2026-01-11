@@ -293,125 +293,6 @@ async function closeBetAutomatically(messageId) {
   }
 }
 
-async function createProfileEmbed(targetUser, user, filter = 'all') {
-  const winrate = await calculateWinrate(targetUser.id);
-  
-  const allUsersByBalance = await User.find({
-    userId: { $regex: /^[0-9]{17,19}$/ }
-  }).sort({ balance: -1 });
-  
-  const allUsersByWinrate = await User.find({
-    userId: { $regex: /^[0-9]{17,19}$/ },
-    'stats.totalBets': { $gt: 0 }
-  }).sort({ 'stats.wonBets': -1 });
-  
-  const rankBalance = allUsersByBalance.findIndex(u => u.userId === targetUser.id) + 1;
-  const rankWinrate = allUsersByWinrate.findIndex(u => u.userId === targetUser.id) + 1;
-  
-  // Filtrer selon le choix
-  let recentHistory;
-  
-  if (filter === 'bets') {
-    recentHistory = user.history.filter(h => {
-      const isGame = h.betId && (
-        h.betId.startsWith('sor_') || 
-        h.betId.startsWith('tower_') || 
-        h.betId.startsWith('slots_') || 
-        h.betId.startsWith('placement_') ||
-        h.question.includes('Safe or Risk') ||
-        h.question.includes('Tower Climb') ||
-        h.question.includes('Lucky Slots') ||
-        h.question.includes('Placement bancaire') ||
-        h.question.includes('PFC')
-      );
-      return !isGame;
-    }).slice(-5).reverse();
-  } else {
-    recentHistory = user.history.slice(-5).reverse();
-  }
-
-  const embed = new EmbedBuilder()
-    .setColor('#FFD700')
-    .setTitle(`📊 Profil de ${targetUser.username}`)
-    .setThumbnail(targetUser.displayAvatarURL())
-    .addFields(
-      { name: '💵 Solde', value: `**${user.balance}€**`, inline: true },
-      { name: '📊 Winrate', value: `**${winrate}%**`, inline: true },
-      { name: '🎲 Paris totaux', value: `${user.stats.totalBets}`, inline: true },
-      { name: '✅ Gagnés', value: `${user.stats.wonBets}`, inline: true },
-      { name: '❌ Perdus', value: `${user.stats.lostBets}`, inline: true },
-      { name: '⚖️ Ratio', value: `${user.stats.wonBets}/${user.stats.lostBets}`, inline: true },
-      { name: '🏆 Classement (Solde)', value: `#${rankBalance}/${allUsersByBalance.length}`, inline: true },
-      { name: '📈 Classement (Victoires)', value: rankWinrate > 0 ? `#${rankWinrate}/${allUsersByWinrate.length}` : 'N/A', inline: true },
-      { name: '\u200b', value: '\u200b', inline: true }
-    )
-    .setTimestamp();
-
-  embed.addFields(
-    { name: '🔥 Winstreak actuelle', value: `${user.currentStreak}`, inline: true },
-    { name: '🏆 Meilleur record', value: `${user.bestStreak}`, inline: true },
-    { name: '💰 Bonus actif', value: user.currentStreak >= 3 ? '✅ +5€/victoire' : '❌', inline: true }
-  );
-
-  if (recentHistory.length > 0) {
-    let historyText = '';
-    const filterIndicator = filter === 'bets' 
-      ? '🎲 **Paris simples & combinés uniquement**\n\n' 
-      : '📋 **Tous les paris (jeux inclus)**\n\n';
-    
-    for (const h of recentHistory) {
-      const resultEmoji = h.result === 'won' ? '✅' : '❌';
-      const isCombi = h.betId && h.betId.startsWith('combi_');
-      
-      let activityEmoji = '💰';
-      if (isCombi) activityEmoji = '🎰';
-      else if (h.betId && h.betId.startsWith('sor_')) activityEmoji = '🎲';
-      else if (h.betId && h.betId.startsWith('tower_')) activityEmoji = '🗼';
-      else if (h.betId && h.betId.startsWith('slots_')) activityEmoji = '🎰';
-      else if (h.betId && h.betId.startsWith('placement_')) activityEmoji = '💼';
-      else if (h.question.includes('PFC')) activityEmoji = '🎮';
-      
-      if (isCombi) {
-        const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
-        historyText += `${resultEmoji} ${activityEmoji} **${h.question}** — ${h.option} — Mise: ${h.amount}€ — ${profit}\n`;
-      } else {
-        const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
-        historyText += `${resultEmoji} ${activityEmoji} **${h.question}** — ${h.option} (${h.amount}€) ${profit}\n`;
-      }
-    }
-    
-    embed.addFields({ 
-      name: '📜 Historique Récent', 
-      value: filterIndicator + historyText, 
-      inline: false 
-    });
-  } else {
-    embed.addFields({ 
-      name: '📜 Historique Récent', 
-      value: filter === 'bets' ? '📭 Aucun pari simple/combiné récent' : '📭 Aucun historique récent', 
-      inline: false 
-    });
-  }
-
-  return embed;
-}
-
-function createProfileButtons(userId, currentFilter = 'all') {
-  return new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`profile_filter_${userId}_all`)
-        .setLabel('📋 Tout afficher')
-        .setStyle(currentFilter === 'all' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-        .setEmoji('📋'),
-      new ButtonBuilder()
-        .setCustomId(`profile_filter_${userId}_bets`)
-        .setLabel('🎲 Paris uniquement')
-        .setStyle(currentFilter === 'bets' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-        .setEmoji('🎲')
-    );
-}
-
 async function handleWinstreak(user, channelId, betDetails) {
   // betDetails = { question, option, amount, winnings, type: 'simple' ou 'combi' }
   
@@ -1014,46 +895,42 @@ if (betRecord) {
       console.log(`✅ Pari gagnant ! Nouvelle progression: ${combi.resolvedBets}/${combi.bets.length}`);
 
       // ⭐ VÉRIFICATION STRICTE : Est-ce vraiment le dernier pari ?
-if (combi.resolvedBets === combi.bets.length) {
-  console.log(`🎉 TOUS LES PARIS VALIDÉS ET GAGNANTS !`);
-  
-  // 🎉 TOUS LES PARIS GAGNÉS !
-  combi.status = 'won';
-  await combi.save();
+      if (combi.resolvedBets === combi.bets.length) {
+        console.log(`🎉 TOUS LES PARIS VALIDÉS ET GAGNANTS !`);
+        
+        // 🎉 TOUS LES PARIS GAGNÉS !
+        combi.status = 'won';
+        await combi.save();
 
-  const user = await getUser(combi.userId);
-  const oldBalanceCombiWin = user.balance;
-  user.balance += combi.potentialWin;
-  await trackBalanceChange(combi.userId, user.balance, oldBalanceCombiWin, 'combi_won');
-  user.stats.totalBets++;
-  user.stats.wonBets++;
-  
-  // ⭐ AJOUTER À L'HISTORIQUE (déplacé AVANT handleWinstreak)
-  user.history.push({
-    betId: combi.combiId,
+const user = await getUser(combi.userId);
+const oldBalanceCombiWin = user.balance;
+user.balance += combi.potentialWin;
+await trackBalanceChange(combi.userId, user.balance, oldBalanceCombiWin, 'combi_won');
+user.stats.totalBets++;
+user.stats.wonBets++;
+const betRecord = await Bet.findOne({ messageId: messageId });
+if (betRecord) {
+  const streakBonus = await handleWinstreak(user, betRecord.channelId, {
     question: `Combiné ${combi.bets.length} matchs`,
     option: `Cote ${combi.totalOdds.toFixed(2)}x`,
     amount: combi.totalStake,
     winnings: combi.potentialWin,
-    result: 'won',
-    timestamp: new Date()
+    type: 'combi'
   });
+}
 
-  // ⭐ SAUVEGARDER AVANT handleWinstreak
-  await user.save();
+// ⭐ AJOUTER À L'HISTORIQUE
+user.history.push({
+  betId: combi.combiId,
+  question: `Combiné ${combi.bets.length} matchs`,
+  option: `Cote ${combi.totalOdds.toFixed(2)}x`,
+  amount: combi.totalStake,
+  winnings: combi.potentialWin,
+  result: 'won',
+  timestamp: new Date()
+});
 
-  // ⭐ MAINTENANT on peut appeler handleWinstreak qui va re-fetch et modifier l'user
-  const betRecord = await Bet.findOne({ messageId: messageId });
-  if (betRecord) {
-    await handleWinstreak(user, betRecord.channelId, {
-      question: `Combiné ${combi.bets.length} matchs`,
-      option: `Cote ${combi.totalOdds.toFixed(2)}x`,
-      amount: combi.totalStake,
-      winnings: combi.potentialWin,
-      type: 'combi'
-    });
-  }
-
+await user.save();
 
         // ⭐ NOTIFICATION COMBINÉ COMPLET GAGNÉ
         const bet = await Bet.findOne({ messageId: messageId });
@@ -1159,37 +1036,6 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
-
-if (action === 'profile') {
-      console.log('✅ Profile détecté !');
-      const subaction = betId; // 'filter'
-      const targetUserId = params[0];
-      const filter = params[1]; // 'all' ou 'bets'
-      
-      console.log('📋 Données profil:', { subaction, targetUserId, filter });
-      
-      if (subaction === 'filter') {
-        try {
-          const targetUser = await client.users.fetch(targetUserId);
-          const user = await getUser(targetUserId);
-          
-          const embed = await createProfileEmbed(targetUser, user, filter);
-          const buttons = createProfileButtons(targetUserId, filter);
-          
-          await interaction.update({ embeds: [embed], components: [buttons] });
-          
-          console.log('✅ Profil mis à jour avec filtre:', filter);
-          return;
-        } catch (error) {
-          console.error('❌ Erreur profile filter:', error);
-          return interaction.reply({ 
-            content: '❌ Erreur lors du changement de filtre.', 
-            ephemeral: true 
-          });
-        }
-      }
-    }
-
 
 if (action === 'sor') {
   // ⭐ CORRECTION : Le parsing était incorrect
@@ -1898,7 +1744,7 @@ await trackBalanceChange(message.author.id, user.balance, oldBalanceCombiCancel,
     
     return; // Important pour ne pas continuer le traitement
   }
-    
+
     if (action === 'leaderboard') {
       const sortBy = params[0];
       
@@ -2320,11 +2166,121 @@ client.on('messageCreate', async (message) => {
 if (command === '!profil' || command === '!profile' || command === '!pr') {
   const targetUser = message.mentions.users.first() || message.author;
   const user = await getUser(targetUser.id);
+  const winrate = await calculateWinrate(targetUser.id);
   
-  const embed = await createProfileEmbed(targetUser, user, 'all');
-  const buttons = createProfileButtons(targetUser.id, 'all');
+  // 🆕 CALCUL DU CLASSEMENT
+  const allUsersByBalance = await User.find({
+    userId: { $regex: /^[0-9]{17,19}$/ }
+  }).sort({ balance: -1 });
   
-  await message.reply({ embeds: [embed], components: [buttons] });
+  const allUsersByWinrate = await User.find({
+    userId: { $regex: /^[0-9]{17,19}$/ },
+    'stats.totalBets': { $gt: 0 }
+  }).sort({ 'stats.wonBets': -1 });
+  
+  const rankBalance = allUsersByBalance.findIndex(u => u.userId === targetUser.id) + 1;
+  const rankWinrate = allUsersByWinrate.findIndex(u => u.userId === targetUser.id) + 1;
+  
+  const recentHistory = user.history.slice(-5).reverse();
+
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle(`📊 Profil de ${targetUser.username}`)
+    .setThumbnail(targetUser.displayAvatarURL())
+    .addFields(
+      { name: '💵 Solde', value: `**${user.balance}€**`, inline: true },
+      { name: '📊 Winrate', value: `**${winrate}%**`, inline: true },
+      { name: '🎲 Paris totaux', value: `${user.stats.totalBets}`, inline: true },
+      { name: '✅ Gagnés', value: `${user.stats.wonBets}`, inline: true },
+      { name: '❌ Perdus', value: `${user.stats.lostBets}`, inline: true },
+      { name: '⚖️ Ratio', value: `${user.stats.wonBets}/${user.stats.lostBets}`, inline: true },
+      // 🆕 CLASSEMENT
+      { name: '🏆 Classement (Solde)', value: `#${rankBalance}/${allUsersByBalance.length}`, inline: true },
+      { name: '📈 Classement (Victoires)', value: rankWinrate > 0 ? `#${rankWinrate}/${allUsersByWinrate.length}` : 'N/A', inline: true },
+      { name: '\u200b', value: '\u200b', inline: true }
+    )
+    .setTimestamp();
+  
+
+  embed.addFields(
+     { name: '🔥 Winstreak actuelle', value: `${user.currentStreak}`, inline: true },
+  { name: '🏆 Meilleur record', value: `${user.bestStreak}`, inline: true },
+  { name: '💰 Bonus actif', value: user.currentStreak >= 3 ? '✅ +5€/victoire' : '❌', inline: true }
+  );
+
+  if (recentHistory.length > 0) {
+    let historyText = '';
+    for (const h of recentHistory) {
+      const resultEmoji = h.result === 'won' ? '✅' : '❌';
+      const isCombi = h.betId && h.betId.startsWith('combi_');
+      
+      if (isCombi) {
+        const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
+        historyText += `${resultEmoji} 🎰 **${h.question}** – ${h.option} – Mise: ${h.amount}€ – ${profit}\n`;
+      } else {
+        const profit = h.result === 'won' ? `+${h.winnings - h.amount}€` : `-${h.amount}€`;
+        historyText += `${resultEmoji} **${h.question}** – ${h.option} (${h.amount}€) ${profit}\n`;
+      }
+    }
+    embed.addFields({ name: '📜 Historique Récent', value: historyText, inline: false });
+  }
+
+  message.reply({ embeds: [embed] });
+}
+
+  if (command === '!streak-history' || command === '!sh') {
+  const user = await getUser(message.author.id);
+  
+  if (!user.streakHistory || user.streakHistory.length === 0) {
+    return message.reply('📊 Vous n\'avez aucun historique de winstreak.');
+  }
+
+  // Prendre les 5 dernières streaks terminées
+  const completedStreaks = user.streakHistory
+    .filter(s => s.endedAt)
+    .sort((a, b) => new Date(b.endedAt) - new Date(a.endedAt))
+    .slice(0, 5);
+
+  if (completedStreaks.length === 0) {
+    return message.reply('📊 Aucune winstreak terminée pour le moment.');
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle('📜 Votre Historique de Winstreaks')
+    .setDescription(`Vos ${completedStreaks.length} dernières séries de victoires :\n`)
+    .setTimestamp();
+
+  for (const streak of completedStreaks) {
+    const totalWinnings = streak.bets.reduce((sum, b) => sum + (b.winnings || 0), 0);
+    const totalStake = streak.bets.reduce((sum, b) => sum + (b.amount || 0), 0);
+    const profit = totalWinnings - totalStake;
+    const bonusEarned = streak.streak >= 3 ? (streak.streak - 2) * 5 : 0;
+
+    let fieldValue = `**Durée :** ${streak.streak} victoires 🔥\n`;
+    fieldValue += `**Gains totaux :** ${totalWinnings}€\n`;
+    fieldValue += `**Profit :** +${profit}€\n`;
+    if (bonusEarned > 0) {
+      fieldValue += `**Bonus streak :** +${bonusEarned}€ 🎁\n`;
+    }
+    fieldValue += `**Terminée le :** ${new Date(streak.endedAt).toLocaleDateString('fr-FR')}\n\n`;
+    
+    fieldValue += `**Paris gagnés :**\n`;
+    streak.bets.forEach((b, i) => {
+      const typeEmoji = b.type === 'combi' ? '🎰' : '💰';
+      fieldValue += `${i + 1}. ${typeEmoji} ${b.question} (${b.amount}€ → ${b.winnings}€)\n`;
+    });
+
+    embed.addFields({
+      name: `🔥 Série de ${streak.streak} victoires`,
+      value: fieldValue,
+      inline: false
+    });
+  }
+
+  embed.setFooter({ text: '💡 Votre record actuel : ' + user.bestStreak + ' victoires' });
+
+  message.reply({ embeds: [embed] });
 }
 
 if (command === '!graph' || command === '!graphique') {
