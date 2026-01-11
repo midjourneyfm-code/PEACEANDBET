@@ -4503,8 +4503,12 @@ if (command === '!mes-combis' || command === '!mc') {
     if (!user.history || user.history.length === 0) continue;
 
     for (const bet of user.history) {
-      // ❌ IGNORER Safe or Risk
-      if (bet.question && bet.question.includes('Safe or Risk')) continue;
+            // ❌ IGNORER Safe or Risk, Lucky Slots et Tower
+      if (bet.question && (
+        bet.question.includes('Safe or Risk') || 
+        bet.question.includes('Lucky Slots') ||
+        bet.question.includes('Tower')
+      )) continue;
       
       // ✅ Seulement les paris gagnés
       if (bet.result !== 'won') continue;
