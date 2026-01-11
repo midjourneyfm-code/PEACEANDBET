@@ -5167,279 +5167,286 @@ if (action === 'combi') {
 }
   
 if (action === 'validate') {
-    const winningOptions = params.map(p => parseInt(p));
-    const bet = await Bet.findOne({ messageId: betId });
-
-    if (!bet) {
-      return interaction.reply({ content: '❌ Ce pari n\'existe plus.', ephemeral: true });
-    }
-
-    console.log('🔍 Validation - Type de bettors:', typeof bet.bettors);
-    console.log('🔍 Validation - Bettors:', bet.bettors);
-    console.log('🔍 Validation - Nombre de clés:', bet.bettors ? Object.keys(bet.bettors).length : 0);
-
-    // Convertir bet.bettors en objet plain si c'est une Map MongoDB
-    const bettorsObj = bet.bettors instanceof Map 
-      ? Object.fromEntries(bet.bettors) 
-      : (bet.bettors || {});
-
-    console.log('🔍 Après conversion - Nombre de parieurs:', Object.keys(bettorsObj).length);
-
-    if (Object.keys(bettorsObj).length === 0) {
-      return interaction.reply({ content: '⚠️ Aucun parieur sur ce match.', ephemeral: true });
-    }
-
-    const member = await interaction.guild.members.fetch(interaction.user.id);
-    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
-
-    if (!hasRole) {
-      return interaction.reply({ content: `❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"**.`, ephemeral: true });
-    }
-
-    if (bet.creator !== interaction.user.id) {
-      return interaction.reply({ content: '❌ Seul le créateur du pari peut le valider.', ephemeral: true });
-    }
-
-    if (bet.status === 'resolved' || bet.status === 'cancelled') {
-      return interaction.reply({ content: '❌ Ce pari a déjà été résolu ou annulé.', ephemeral: true });
-    }
-
-    // Filtrer les gagnants
-    const winners = Object.entries(bettorsObj).filter(([userId, betData]) => {
-      console.log(`🔍 Vérif ${userId} - option: ${betData.option}, gagnantes: ${winningOptions.join(',')}`);
-      return winningOptions.includes(betData.option);
-    });
-
-    console.log(`🏆 Nombre de gagnants: ${winners.length}`);
-
-// CAS 1 : Aucun gagnant
-if (winners.length === 0) {
-  await interaction.reply('⚠️ Aucun gagnant pour ce pari. Les mises sont perdues.');
+  // ✅ DIFFÉRER LA RÉPONSE IMMÉDIATEMENT
+  await interaction.deferUpdate();
   
-  // Mettre à jour les stats de tous les parieurs (tous perdants)
+  const winningOptions = params.map(p => parseInt(p));
+  const bet = await Bet.findOne({ messageId: betId });
+
+  if (!bet) {
+    return interaction.editReply({ content: '❌ Ce pari n\'existe plus.' });
+  }
+
+  console.log('🔍 Validation - Type de bettors:', typeof bet.bettors);
+
+  // Convertir bet.bettors en objet plain si c'est une Map MongoDB
+  const bettorsObj = bet.bettors instanceof Map 
+    ? Object.fromEntries(bet.bettors) 
+    : (bet.bettors || {});
+
+  console.log('🔍 Après conversion - Nombre de parieurs:', Object.keys(bettorsObj).length);
+
+  if (Object.keys(bettorsObj).length === 0) {
+    return interaction.editReply({ content: '⚠️ Aucun parieur sur ce match.' });
+  }
+
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+  if (!hasRole) {
+    return interaction.editReply({ content: `❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"**.` });
+  }
+
+  if (bet.creator !== interaction.user.id) {
+    return interaction.editReply({ content: '❌ Seul le créateur du pari peut le valider.' });
+  }
+
+  if (bet.status === 'resolved' || bet.status === 'cancelled') {
+    return interaction.editReply({ content: '❌ Ce pari a déjà été résolu ou annulé.' });
+  }
+
+  // Filtrer les gagnants
+  const winners = Object.entries(bettorsObj).filter(([userId, betData]) => {
+    console.log(`🔍 Vérif ${userId} - option: ${betData.option}, gagnantes: ${winningOptions.join(',')}`);
+    return winningOptions.includes(betData.option);
+  });
+
+  console.log(`🏆 Nombre de gagnants: ${winners.length}`);
+
+  // ✅ OPTIMISATION : Préparer toutes les mises à jour en batch
+  const userUpdates = [];
+  let totalDistributed = 0;
+  let simpleWinners = [];
+  let simpleLosers = [];
+
+  // CAS 1 : Aucun gagnant
+  if (winners.length === 0) {
+    // Traiter tous les parieurs (tous perdants)
+    for (const [userId, betData] of Object.entries(bettorsObj)) {
+      // IGNORER LES PARIEURS DE COMBINÉ
+      if (betData.isCombi || userId.includes('_combi')) {
+        continue;
+      }
+      
+      userUpdates.push({
+        userId,
+        updateFn: async () => {
+          const user = await getUser(userId);
+          user.stats.totalBets++;
+          user.stats.lostBets++;
+          user.history.push({
+            betId: bet.messageId,
+            question: bet.question,
+            option: bet.options[betData.option].name,
+            amount: betData.amount,
+            winnings: 0,
+            result: 'lost',
+            timestamp: new Date()
+          });
+          await user.save();
+        }
+      });
+    }
+    
+    // ✅ EXÉCUTER TOUTES LES MISES À JOUR EN PARALLÈLE
+    await Promise.all(userUpdates.map(u => u.updateFn()));
+    
+    bet.status = 'resolved';
+    bet.winningOptions = winningOptions;
+    await bet.save();
+    
+    const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+      .setColor('#FF0000')
+      .setTitle('📊 Pari Terminé - Aucun Gagnant');
+    
+    await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+    
+    // ✅ Vérifier les combinés APRÈS la mise à jour
+    const combiNotifications = await checkCombisForBet(betId, winningOptions);
+    
+    // Construire le message de réponse
+    let responseText = '⚠️ Aucun gagnant pour ce pari. Les mises sont perdues.';
+    
+    if (combiNotifications && combiNotifications.length > 0) {
+      responseText += '\n\n🎰 **Combinés affectés :**\n';
+      
+      for (const notif of combiNotifications) {
+        if (notif.type === 'won') {
+          responseText += `\n🏆🎉 <@${notif.userId}> : COMBINÉ GAGNANT ! (${notif.totalBets} matchs)`;
+        } else if (notif.type === 'lost') {
+          responseText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.totalBets} matchs)`;
+        } else if (notif.type === 'progress') {
+          responseText += `\n✅ <@${notif.userId}> : Combiné en progression (${notif.resolved}/${notif.total})`;
+        }
+      }
+    }
+
+    // Calculer les mises perdues
+    let totalLost = 0;
+    let losersCount = 0;
+    for (const [userId, betData] of Object.entries(bettorsObj)) {
+      if (betData.isCombi || userId.includes('_combi')) continue;
+      totalLost += betData.amount;
+      losersCount++;
+    }
+
+    if (losersCount > 0) {
+      responseText += `\n\n💸 **Mises perdues** : ${losersCount} parieur(s) ont perdu un total de **${totalLost}€**`;
+    }
+    
+    await interaction.followUp(responseText);
+    return;
+  }
+
+  // CAS 2 : Il y a des gagnants
+  // ✅ OPTIMISATION : Préparer toutes les mises à jour
   for (const [userId, betData] of Object.entries(bettorsObj)) {
     // IGNORER LES PARIEURS DE COMBINÉ
     if (betData.isCombi || userId.includes('_combi')) {
+      console.log(`⭐️ ${userId} fait partie d'un combiné, ignoré`);
       continue;
     }
     
-    const user = await getUser(userId);
-    user.stats.totalBets++;
-    user.stats.lostBets++;
-    user.history.push({
-      betId: bet.messageId,
-      question: bet.question,
-      option: bet.options[betData.option].name,
-      amount: betData.amount,
-      winnings: 0,
-      result: 'lost',
-      timestamp: new Date()
+    userUpdates.push({
+      userId,
+      isWinner: winningOptions.includes(betData.option),
+      betData,
+      updateFn: async () => {
+        const user = await getUser(userId);
+        user.stats.totalBets++;
+        
+        if (winningOptions.includes(betData.option)) {
+          // GAGNANT
+          user.stats.wonBets++;
+          const odds = bet.initialOdds[betData.option];
+          const winnings = calculatePotentialWin(betData.amount, odds);
+          const profit = winnings - betData.amount;
+          const oldBalance = user.balance;
+
+          user.balance += winnings;
+          await trackBalanceChange(userId, user.balance, oldBalance, 'bet_won');
+          
+          // Gestion winstreak
+          const streakBonus = await handleWinstreak(user, bet.channelId, {
+            question: bet.question,
+            option: bet.options[betData.option].name,
+            amount: betData.amount,
+            winnings: winnings,
+            type: 'simple'
+          });
+          
+          user.history.push({
+            betId: bet.messageId,
+            question: bet.question,
+            option: bet.options[betData.option].name,
+            amount: betData.amount,
+            winnings: winnings,
+            result: 'won',
+            timestamp: new Date()
+          });
+
+          await user.save();
+
+          return {
+            type: 'winner',
+            userId,
+            amount: betData.amount,
+            odds,
+            winnings,
+            profit
+          };
+        } else {
+          // PERDANT
+          user.stats.lostBets++;
+          await breakWinstreak(user, bet.channelId);
+          
+          user.history.push({
+            betId: bet.messageId,
+            question: bet.question,
+            option: bet.options[betData.option].name,
+            amount: betData.amount,
+            winnings: 0,
+            result: 'lost',
+            timestamp: new Date()
+          });
+
+          await user.save();
+
+          return {
+            type: 'loser',
+            userId,
+            amount: betData.amount,
+            option: bet.options[betData.option].name
+          };
+        }
+      }
     });
-    await user.save();
   }
-  
+
+  // ✅ EXÉCUTER TOUTES LES MISES À JOUR EN PARALLÈLE
+  const results = await Promise.all(userUpdates.map(u => u.updateFn()));
+
+  // Séparer les gagnants et perdants
+  simpleWinners = results.filter(r => r && r.type === 'winner');
+  simpleLosers = results.filter(r => r && r.type === 'loser');
+  totalDistributed = simpleWinners.reduce((sum, w) => sum + w.winnings, 0);
+
   bet.status = 'resolved';
   bet.winningOptions = winningOptions;
   await bet.save();
-  
+
   const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-    .setColor('#FF0000')
-    .setTitle('📊 Pari Terminé - Aucun Gagnant');
-  
+    .setColor('#00FF00')
+    .setTitle('📊 Pari Terminé')
+    .addFields(
+      { name: '✅ Résultat', value: winningOptions.map(i => `${bet.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
+      { name: '💵 Total distribué', value: `${totalDistributed}€`, inline: true },
+      { name: '👥 Gagnants', value: `${simpleWinners.length}`, inline: true }
+    );
+
   await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
-  
-  // ⭐ VÉRIFIER LES COMBINÉS MÊME QUAND IL N'Y A PAS DE GAGNANTS
+
+  // Construire le message de distribution
+  let distributionText = '🏆 **Résultats du pari**\n\n';
+  distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
+
+  if (simpleWinners.length > 0) {
+    distributionText += '**💰 Gagnants (Paris simples) :**\n';
+    for (const w of simpleWinners) {
+      distributionText += `• <@${w.userId}> : Misé ${w.amount}€ (cote ${w.odds}x) → Gagné **${w.winnings}€** (profit: +${w.profit}€)\n`;
+    }
+    distributionText += '\n';
+  }
+
+  if (simpleLosers.length > 0) {
+    distributionText += '**❌ Perdants (Paris simples) :**\n';
+    for (const l of simpleLosers) {
+      distributionText += `• <@${l.userId}> : Perdu ${l.amount}€ sur ${l.option}\n`;
+    }
+    distributionText += '\n';
+  }
+
+  // Vérifier les combinés
   const combiNotifications = await checkCombisForBet(betId, winningOptions);
-  
-  // ⭐ AFFICHER LES COMBINÉS AFFECTÉS
+
   if (combiNotifications && combiNotifications.length > 0) {
-    let combiText = '\n\n🎰 **Combinés affectés :**\n';
+    distributionText += '🎰 **Combinés affectés :**\n';
     
     for (const notif of combiNotifications) {
-      if (notif.type === 'won') {
-        combiText += `\n🏆🎉 <@${notif.userId}> : COMBINÉ GAGNANT ! (${notif.totalBets} matchs)`;
-        combiText += `\n   ├─ Mise : ${notif.stake}€`;
-        combiText += `\n   ├─ Cote : ${notif.odds.toFixed(2)}x`;
-        combiText += `\n   ├─ 💰 GAIN : **${notif.potentialWin}€**`;
-        combiText += `\n   └─ Profit : **+${notif.profit}€**`;
-        
-      } else if (notif.type === 'lost') {
-        combiText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.totalBets} matchs, ${notif.stake}€ perdus)`;
-        combiText += `\n   └─ Pari perdant : **${notif.question}** → ${notif.optionName}`;
-        
+      if (notif.type === 'lost') {
+        distributionText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.totalBets} matchs, ${notif.stake}€ perdus)`;
+        distributionText += `\n   └─ Pari perdant : **${notif.question}** → ${notif.optionName}`;
       } else if (notif.type === 'progress') {
-        combiText += `\n✅ <@${notif.userId}> : Combiné en progression (${notif.resolved}/${notif.total})`;
-        combiText += `\n   ├─ **${notif.question}** → ${notif.optionName} ✅`;
-        combiText += `\n   └─ Gain potentiel : **${notif.potentialWin}€** (${notif.odds.toFixed(2)}x)`;
+        distributionText += `\n✅ <@${notif.userId}> : Combiné en progression (${notif.resolved}/${notif.total})`;
+        distributionText += `\n   └─ **${notif.question}** → ${notif.optionName} ✅`;
+        distributionText += `\n   └─ Gain potentiel : **${notif.potentialWin}€** (${notif.odds.toFixed(2)}x)`;
       }
     }
-    
-    await interaction.followUp(combiText);
   }
 
-// ⭐ CALCULER ET AFFICHER LES MISES PERDUES
-let totalLost = 0;
-let losersCount = 0;
+  await interaction.followUp(distributionText);
 
-for (const [userId, betData] of Object.entries(bettorsObj)) {
-  if (betData.isCombi || userId.includes('_combi')) {
-    continue;
-  }
-  totalLost += betData.amount;
-  losersCount++;
-}
-
-if (losersCount > 0) {
-  await interaction.followUp(`💸 **Mises perdues** : ${losersCount} parieur(s) ont perdu un total de **${totalLost}€**`);
-}
-  
-  return;
-}
-
-// CAS 2 : Il y a des gagnants
-let distributionText = '🏆 **Résultats du pari**\n\n';
-distributionText += `Options gagnantes : ${winningOptions.map(i => bet.options[i].name).join(', ')}\n\n`;
-
-let totalDistributed = 0;
-let simpleWinners = [];
-let simpleLosers = [];
-
-// Traiter tous les parieurs
-for (const [userId, betData] of Object.entries(bettorsObj)) {
-  // IGNORER LES PARIEURS DE COMBINÉ
-  if (betData.isCombi || userId.includes('_combi')) {
-    console.log(`⭐️ ${userId} fait partie d'un combiné, ignoré`);
-    continue;
-  }
-  
-  const user = await getUser(userId);
-  user.stats.totalBets++;
-  
-  if (winningOptions.includes(betData.option)) {
-    // GAGNANT
-user.stats.wonBets++;
-const odds = bet.initialOdds[betData.option];
-const winnings = calculatePotentialWin(betData.amount, odds);
-const profit = winnings - betData.amount;
-const oldBalance = user.balance;
-
-user.balance += winnings;
-await trackBalanceChange(userId, user.balance, oldBalance, 'bet_won');
-totalDistributed += winnings;
-    
-
-// ⭐ GESTION WINSTREAK POUR PARIS SIMPLES
-const streakBonus = await handleWinstreak(user, bet.channelId, {
-  question: bet.question,
-  option: bet.options[betData.option].name,
-  amount: betData.amount,
-  winnings: winnings,
-  type: 'simple'
-});
-    
-    simpleWinners.push({
-      userId,
-      amount: betData.amount,
-      odds,
-      winnings,
-      profit
-    });
-    
-    user.history.push({
-      betId: bet.messageId,
-      question: bet.question,
-      option: bet.options[betData.option].name,
-      amount: betData.amount,
-      winnings: winnings,
-      result: 'won',
-      timestamp: new Date()
-    });
-
-
-    console.log(`✅ ${userId} a gagné ${winnings}€`);
-  } else {
-    // PERDANT
-    user.stats.lostBets++;
-    await breakWinstreak(user, bet.channelId);
-    
-    simpleLosers.push({
-      userId,
-      amount: betData.amount,
-      option: bet.options[betData.option].name
-    });
-    
-    user.history.push({
-      betId: bet.messageId,
-      question: bet.question,
-      option: bet.options[betData.option].name,
-      amount: betData.amount,
-      winnings: 0,
-      result: 'lost',
-      timestamp: new Date()
-    });
-
-    console.log(`❌ ${userId} a perdu ${betData.amount}€`);
-  }
-  
-  await user.save();
-  await trackBalanceChange(userId, user.balance, user.balance, 'bet_lost'); // Pas de changement car déjà déduit
-}
-
-// ⭐ AFFICHER LES GAGNANTS DE PARIS SIMPLES
-if (simpleWinners.length > 0) {
-  distributionText += '**💰 Gagnants (Paris simples) :**\n';
-  for (const w of simpleWinners) {
-    distributionText += `• <@${w.userId}> : Misé ${w.amount}€ (cote ${w.odds}x) → Gagné **${w.winnings}€** (profit: +${w.profit}€)\n`;
-  }
-  distributionText += '\n';
-}
-
-// ⭐ AFFICHER LES PERDANTS DE PARIS SIMPLES
-if (simpleLosers.length > 0) {
-  distributionText += '**❌ Perdants (Paris simples) :**\n';
-  for (const l of simpleLosers) {
-    distributionText += `• <@${l.userId}> : Perdu ${l.amount}€ sur ${l.option}\n`;
-  }
-  distributionText += '\n';
-}
-
-bet.status = 'resolved';
-bet.winningOptions = winningOptions;
-await bet.save();
-
-const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-  .setColor('#00FF00')
-  .setTitle('📊 Pari Terminé')
-  .addFields(
-    { name: '✅ Résultat', value: winningOptions.map(i => `${bet.options[i].name} (${bet.initialOdds[i]}x)`).join('\n'), inline: true },
-    { name: '💵 Total distribué', value: `${totalDistributed}€`, inline: true },
-    { name: '👥 Gagnants', value: `${simpleWinners.length}`, inline: true }
-  );
-
-await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
-
-// ⭐ VÉRIFIER LES COMBINÉS ET OBTENIR LES NOTIFICATIONS
-const combiNotifications = await checkCombisForBet(betId, winningOptions);
-
-// ⭐ AJOUTER LES NOTIFICATIONS DE COMBINÉS AU MESSAGE
-if (combiNotifications && combiNotifications.length > 0) {
-  distributionText += '🎰 **Combinés affectés :**\n';
-  
-  for (const notif of combiNotifications) {
-    if (notif.type === 'lost') {
-      distributionText += `\n❌ <@${notif.userId}> : Combiné **PERDU** (${notif.totalBets} matchs, ${notif.stake}€ perdus)`;
-      distributionText += `\n   └─ Pari perdant : **${notif.question}** → ${notif.optionName}`;
-    } else if (notif.type === 'progress') {
-      distributionText += `\n✅ <@${notif.userId}> : Combiné en progression (${notif.resolved}/${notif.total})`;
-      distributionText += `\n   └─ **${notif.question}** → ${notif.optionName} ✅`;
-      distributionText += `\n   └─ Gain potentiel : **${notif.potentialWin}€** (${notif.odds.toFixed(2)}x)`;
-    }
-  }
-}
-
-await interaction.reply(distributionText);
-
-console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${totalDistributed}€ distribués`);
+  console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${totalDistributed}€ distribués`);
 }
 
 if (action === 'pfc') {
