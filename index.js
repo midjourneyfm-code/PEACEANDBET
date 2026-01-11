@@ -1156,18 +1156,35 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
 
-        if (action === 'profile' && params[0] === 'filter') {
-  const targetUserId = params[1];
-  const filter = params[2];
-  
-  const targetUser = await client.users.fetch(targetUserId);
-  const user = await getUser(targetUserId);
-  
-  const embed = await createProfileEmbed(targetUser, user, filter);
-  const buttons = createProfileButtons(targetUserId, filter);
-  
-  await interaction.update({ embeds: [embed], components: [buttons] });
-}
+if (action === 'profile') {
+      console.log('✅ Profile détecté !');
+      const subaction = betId; // 'filter'
+      const targetUserId = params[0];
+      const filter = params[1]; // 'all' ou 'bets'
+      
+      console.log('📋 Données profil:', { subaction, targetUserId, filter });
+      
+      if (subaction === 'filter') {
+        try {
+          const targetUser = await client.users.fetch(targetUserId);
+          const user = await getUser(targetUserId);
+          
+          const embed = await createProfileEmbed(targetUser, user, filter);
+          const buttons = createProfileButtons(targetUserId, filter);
+          
+          await interaction.update({ embeds: [embed], components: [buttons] });
+          
+          console.log('✅ Profil mis à jour avec filtre:', filter);
+          return;
+        } catch (error) {
+          console.error('❌ Erreur profile filter:', error);
+          return interaction.reply({ 
+            content: '❌ Erreur lors du changement de filtre.', 
+            ephemeral: true 
+          });
+        }
+      }
+    }
 
 
 if (action === 'sor') {
