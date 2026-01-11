@@ -52,6 +52,16 @@ const userSchema = new mongoose.Schema({
   }]
 });
 
+const balanceHistorySchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  balance: { type: Number, required: true },
+  change: { type: Number, default: 0 }, // +/- par rapport au précédent
+  reason: { type: String }, // 'bet_won', 'bet_lost', 'daily_spin', 'gift', etc.
+  timestamp: { type: Date, default: Date.now }
+});
+
+const BalanceHistory = mongoose.model('BalanceHistory', balanceHistorySchema);
+
 const betSchema = new mongoose.Schema({
   messageId: { type: String, required: true, unique: true },
   question: String,
@@ -124,6 +134,7 @@ async function getUser(userId) {
   if (!user) {
     user = new User({ userId, balance: 100 });
     await user.save();
+    await trackBalanceChange(userId, 100, 0, 'initial_balance');
   }
   return user;
 }
@@ -136,6 +147,21 @@ async function getBalance(userId) {
 async function getStats(userId) {
   const user = await getUser(userId);
   return user.stats;
+}
+
+async function trackBalanceChange(userId, newBalance, oldBalance, reason) {
+  try {
+    const change = newBalance - oldBalance;
+    await BalanceHistory.create({
+      userId,
+      balance: newBalance,
+      change,
+      reason,
+      timestamp: new Date()
+    });
+  } catch (error) {
+    console.error('❌ Erreur tracking balance:', error);
+  }
 }
 
 async function calculateWinrate(userId) {
@@ -266,7 +292,9 @@ async function handleWinstreak(user, channelId, betDetails) {
   // 🔥 BONUS À PARTIR DE 3 VICTOIRES CONSÉCUTIVES
   if (user.currentStreak >= 3) {
     bonusAmount = 5;
+    const oldBalance = user.balance;
     user.balance += bonusAmount;
+    await trackBalanceChange(user.userId, user.balance, oldBalance, 'winstreak_bonus');
     
     const streakEmojis = {
       3: '🔥',
@@ -565,7 +593,9 @@ if (betRecord) {
         await combi.save();
 
 const user = await getUser(combi.userId);
+const oldBalanceCombiWin = user.balance;
 user.balance += combi.potentialWin;
+await trackBalanceChange(combi.userId, user.balance, oldBalanceCombiWin, 'combi_won');
 user.stats.totalBets++;
 user.stats.wonBets++;
 const betRecord = await Bet.findOne({ messageId: messageId });
@@ -715,8 +745,10 @@ if (action === 'sor') {
 
     // Rembourser le joueur
     const user = await getUser(userId);
+    const oldBalanceCancel = user.balance;
     user.balance += game.stake;
     await user.save();
+    await trackBalanceChange(userId, user.balance, oldBalanceCancel, 'safe_or_risk_refund');
 
     // Supprimer la partie
     activeSafeOrRiskGames.delete(userId);
@@ -754,7 +786,9 @@ if (action === 'sor') {
 
     // Créditer le joueur
     const user = await getUser(userId);
-    user.balance += winnings;
+    const oldBalance = user.balance;
+  user.balance += winnings;
+    await trackBalanceChange(userId, user.balance, oldBalance, 'bet_won');
     user.stats.totalBets++;
     user.stats.wonBets++;
     user.history.push({
@@ -1024,8 +1058,10 @@ if (action === 'sor') {
 
     // Rembourser
     const user = await getUser(interaction.user.id);
-    user.balance += combi.totalStake;
-    await user.save();
+const oldBalanceCombiCancel = user.balance;
+user.balance += combi.totalStake;
+await user.save();
+await trackBalanceChange(message.author.id, user.balance, oldBalanceCombiCancel, 'combi_cancelled');
 
     combi.status = 'cancelled';
     await combi.save();
@@ -1179,8 +1215,10 @@ if (action === 'sor') {
       const potentialWin = calculatePotentialWin(amount, odds);
 
       // Déduire du solde de l'utilisateur
-      user.balance -= amount;
-      await user.save();
+ const oldBalanceBet = user.balance;
+user.balance -= amount;
+await user.save();
+await trackBalanceChange(interaction.user.id, user.balance, oldBalanceBet, 'bet_placed');
 
       // ⚡ OPÉRATION ATOMIQUE : Mise à jour directe dans MongoDB
       // Cela évite les race conditions en modifiant directement la DB
@@ -1429,8 +1467,10 @@ client.on('messageCreate', async (message) => {
   
   // Créditer l'utilisateur
   const user = await getUser(message.author.id);
+  const oldBalance = user.balance;
   user.balance += reward;
   await user.save();
+  await trackBalanceChange(message.author.id, user.balance, oldBalance, 'daily_spin');
   
   // Enregistrer le spin
   await updateLastSpin(message.author.id);
@@ -1598,6 +1638,363 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
   message.reply({ embeds: [embed] });
 }
 
+  if (command === '!graph' || command === '!graphique') {
+  const period = args[1] || '30d'; // 7d, 30d, 90d, all
+  const targetUser = message.mentions.users.first() || message.author;
+  
+  let daysAgo;
+  let periodLabel;
+  
+  switch(period) {
+    case '7d':
+      daysAgo = 7;
+      periodLabel = '7 derniers jours';
+      break;
+    case '30d':
+      daysAgo = 30;
+      periodLabel = '30 derniers jours';
+      break;
+    case '90d':
+      daysAgo = 90;
+      periodLabel = '90 derniers jours';
+      break;
+    case 'all':
+      daysAgo = null;
+      periodLabel = 'Depuis le début';
+      break;
+    default:
+      return message.reply(
+        '❌ **Période invalide !**\n\n' +
+        '📊 **Utilisez :** `!graph [période]`\n\n' +
+        '**Périodes disponibles :**\n' +
+        '• `7d` - 7 derniers jours\n' +
+        '• `30d` - 30 derniers jours (par défaut)\n' +
+        '• `90d` - 90 derniers jours\n' +
+        '• `all` - Depuis le début\n\n' +
+        '**Exemple :** `!graph 7d` ou `!graph @Jean 30d`'
+      );
+  }
+  
+  // Récupérer l'historique du solde
+  const query = { userId: targetUser.id };
+  if (daysAgo) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysAgo);
+    query.timestamp = { $gte: cutoffDate };
+  }
+  
+  const history = await BalanceHistory.find(query).sort({ timestamp: 1 });
+  
+  if (history.length === 0) {
+    return message.reply('📊 Pas assez de données pour générer un graphique.');
+  }
+  
+  // Calculer les statistiques
+  const balances = history.map(h => h.balance);
+  const maxBalance = Math.max(...balances);
+  const minBalance = Math.min(...balances);
+  const currentBalance = balances[balances.length - 1];
+  const startBalance = balances[0];
+  const totalChange = currentBalance - startBalance;
+  const changePercent = ((totalChange / startBalance) * 100).toFixed(1);
+  
+  // Créer un graphique ASCII simple
+  const graphHeight = 10;
+  const graphWidth = 40;
+  const range = maxBalance - minBalance || 1;
+  
+  let graph = '';
+  for (let y = graphHeight; y >= 0; y--) {
+    const threshold = minBalance + (range * y / graphHeight);
+    let line = '';
+    
+    for (let x = 0; x < graphWidth; x++) {
+      const dataIndex = Math.floor((history.length - 1) * x / (graphWidth - 1));
+      const value = balances[dataIndex];
+      
+      if (Math.abs(value - threshold) < range / (graphHeight * 2)) {
+        line += '●';
+      } else if (value > threshold) {
+        line += '│';
+      } else {
+        line += ' ';
+      }
+    }
+    
+    const label = Math.round(threshold).toString().padStart(5);
+    graph += `${label}€ ${line}\n`;
+  }
+  
+  // Points de données marquants
+  const wins = history.filter(h => h.reason && h.reason.includes('won')).length;
+  const losses = history.filter(h => h.reason && h.reason.includes('lost')).length;
+  
+  const embed = new EmbedBuilder()
+    .setColor(totalChange >= 0 ? '#00FF00' : '#FF0000')
+    .setTitle(`📈 Évolution du Solde - ${periodLabel}`)
+    .setDescription(
+      `**Joueur :** <@${targetUser.id}>\n\n` +
+      '```\n' + graph + '\n' +
+      '      └' + '─'.repeat(graphWidth - 2) + '┘\n' +
+      `      ${history[0].timestamp.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}` +
+      ' '.repeat(graphWidth - 20) +
+      `${history[history.length - 1].timestamp.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}\n` +
+      '```'
+    )
+    .addFields(
+      { name: '💰 Solde actuel', value: `${currentBalance}€`, inline: true },
+      { name: '📊 Variation', value: `${totalChange >= 0 ? '+' : ''}${totalChange}€ (${changePercent >= 0 ? '+' : ''}${changePercent}%)`, inline: true },
+      { name: '\u200b', value: '\u200b', inline: true },
+      { name: '📈 Maximum', value: `${maxBalance}€`, inline: true },
+      { name: '📉 Minimum', value: `${minBalance}€`, inline: true },
+      { name: '\u200b', value: '\u200b', inline: true },
+      { name: '✅ Paris gagnés', value: `${wins}`, inline: true },
+      { name: '❌ Paris perdus', value: `${losses}`, inline: true },
+      { name: '📅 Points de données', value: `${history.length}`, inline: true }
+    )
+    .setFooter({ text: `💡 Utilisez !graph [7d/30d/90d/all] pour changer la période` })
+    .setTimestamp();
+  
+  message.reply({ embeds: [embed] });
+}
+
+  if (command === '!analysis' || command === '!analyse') {
+  const targetUser = message.mentions.users.first() || message.author;
+  const user = await getUser(targetUser.id);
+  
+  // Récupérer l'historique des 30 derniers jours
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  
+  const recentHistory = await BalanceHistory.find({
+    userId: targetUser.id,
+    timestamp: { $gte: thirtyDaysAgo }
+  }).sort({ timestamp: 1 });
+  
+  if (recentHistory.length === 0) {
+    return message.reply('📊 Pas assez de données pour effectuer une analyse.');
+  }
+  
+  // Préparer les données pour l'IA
+  const stats = user.stats;
+  const winrate = stats.totalBets > 0 ? ((stats.wonBets / stats.totalBets) * 100).toFixed(1) : 0;
+  
+  const balanceChanges = recentHistory.map(h => h.change);
+  const avgChange = balanceChanges.reduce((a, b) => a + b, 0) / balanceChanges.length;
+  
+  const bigWins = user.history.filter(h => h.result === 'won' && h.winnings > 100).length;
+  const bigLosses = user.history.filter(h => h.result === 'lost' && h.amount > 50).length;
+  
+  const combiCount = user.history.filter(h => h.betId && h.betId.startsWith('combi_')).length;
+  const simpleCount = user.history.filter(h => !h.betId || !h.betId.startsWith('combi_')).length;
+  
+  // Appel à l'API Claude
+  const loadingMsg = await message.reply('🤖 **Analyse en cours...**\nClaude analyse votre profil de parieur...');
+  
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        messages: [
+          { 
+            role: "user", 
+            content: `Tu es un expert en paris sportifs. Analyse ce profil de joueur et donne des recommandations en français.
+
+**Statistiques du joueur :**
+- Solde actuel : ${user.balance}€
+- Total de paris : ${stats.totalBets}
+- Paris gagnés : ${stats.wonBets}
+- Paris perdus : ${stats.lostBets}
+- Winrate : ${winrate}%
+- Winstreak actuelle : ${user.currentStreak}
+- Meilleur winstreak : ${user.bestStreak}
+- Variation moyenne quotidienne : ${avgChange.toFixed(2)}€
+- Gros gains (>100€) : ${bigWins}
+- Grosses pertes (>50€) : ${bigLosses}
+- Combinés joués : ${combiCount}
+- Paris simples : ${simpleCount}
+
+Fournis une analyse courte (max 200 mots) avec :
+1. Un diagnostic de son style de jeu
+2. Ses points forts
+3. Ses axes d'amélioration
+4. 2-3 recommandations concrètes
+
+Sois direct, constructif et encourage le jeu responsable.`
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+    const analysisText = data.content
+      .map(item => item.type === "text" ? item.text : "")
+      .join("\n");
+
+    const embed = new EmbedBuilder()
+      .setColor('#00D9FF')
+      .setTitle('🤖 Analyse IA de votre Profil')
+      .setDescription(`**Joueur :** <@${targetUser.id}>\n\n${analysisText}`)
+      .addFields(
+        { name: '💰 Solde', value: `${user.balance}€`, inline: true },
+        { name: '📊 Winrate', value: `${winrate}%`, inline: true },
+        { name: '🎲 Paris', value: `${stats.totalBets}`, inline: true }
+      )
+      .setFooter({ text: '🤖 Analyse générée par Claude AI | Jouez responsable' })
+      .setTimestamp();
+
+    await loadingMsg.edit({ content: null, embeds: [embed] });
+    
+  } catch (error) {
+    console.error('❌ Erreur API Claude:', error);
+    await loadingMsg.edit('❌ Erreur lors de l\'analyse. Réessayez plus tard.');
+  }
+}
+
+  if (command === '!stats' || command === '!statistiques') {
+  const targetUser = message.mentions.users.first() || message.author;
+  const user = await getUser(targetUser.id);
+  
+  // Récupérer l'historique complet
+  const allHistory = user.history || [];
+  
+  if (allHistory.length === 0) {
+    return message.reply('📊 Aucune donnée disponible pour ce joueur.');
+  }
+  
+  // === ANALYSE PAR HEURE ===
+  const betsByHour = {};
+  for (let i = 0; i < 24; i++) {
+    betsByHour[i] = { total: 0, won: 0 };
+  }
+  
+  allHistory.forEach(bet => {
+    if (bet.timestamp) {
+      const hour = new Date(bet.timestamp).getHours();
+      betsByHour[hour].total++;
+      if (bet.result === 'won') betsByHour[hour].won++;
+    }
+  });
+  
+  let bestHour = 0;
+  let bestHourWinrate = 0;
+  
+  Object.entries(betsByHour).forEach(([hour, data]) => {
+    if (data.total >= 3) {
+      const winrate = (data.won / data.total) * 100;
+      if (winrate > bestHourWinrate) {
+        bestHourWinrate = winrate;
+        bestHour = parseInt(hour);
+      }
+    }
+  });
+  
+  // === ANALYSE PAR JOUR ===
+  const betsByDay = {};
+  const dayNames = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+  dayNames.forEach((day, i) => {
+    betsByDay[i] = { name: day, total: 0, won: 0 };
+  });
+  
+  allHistory.forEach(bet => {
+    if (bet.timestamp) {
+      const dayIndex = (new Date(bet.timestamp).getDay() + 6) % 7;
+      betsByDay[dayIndex].total++;
+      if (bet.result === 'won') betsByDay[dayIndex].won++;
+    }
+  });
+  
+  let bestDay = betsByDay[0];
+  Object.values(betsByDay).forEach(day => {
+    if (day.total >= 3) {
+      const winrate = (day.won / day.total) * 100;
+      const bestWinrate = (bestDay.won / (bestDay.total || 1)) * 100;
+      if (winrate > bestWinrate) {
+        bestDay = day;
+      }
+    }
+  });
+  
+  // === ANALYSE PAR TYPE DE PARI ===
+  const combiBets = allHistory.filter(h => h.betId && h.betId.startsWith('combi_'));
+  const simpleBets = allHistory.filter(h => !h.betId || !h.betId.startsWith('combi_'));
+  
+  const combiWinrate = combiBets.length > 0 
+    ? ((combiBets.filter(b => b.result === 'won').length / combiBets.length) * 100).toFixed(1)
+    : 0;
+  
+  const simpleWinrate = simpleBets.length > 0
+    ? ((simpleBets.filter(b => b.result === 'won').length / simpleBets.length) * 100).toFixed(1)
+    : 0;
+  
+  // === ÉVOLUTION DU SOLDE (7 derniers jours) ===
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  
+  const recentBalanceHistory = await BalanceHistory.find({
+    userId: targetUser.id,
+    timestamp: { $gte: sevenDaysAgo }
+  }).sort({ timestamp: 1 });
+  
+  const balanceEvolution = recentBalanceHistory.length > 0
+    ? recentBalanceHistory[recentBalanceHistory.length - 1].balance - recentBalanceHistory[0].balance
+    : 0;
+  
+  // === MOYENNE DES MISES ===
+  const avgBet = allHistory.reduce((sum, bet) => sum + bet.amount, 0) / allHistory.length;
+  const avgWin = allHistory
+    .filter(h => h.result === 'won')
+    .reduce((sum, bet) => sum + bet.winnings, 0) / (user.stats.wonBets || 1);
+  
+  // === ROI (Return on Investment) ===
+  const totalStaked = allHistory.reduce((sum, bet) => sum + bet.amount, 0);
+  const totalWon = allHistory
+    .filter(h => h.result === 'won')
+    .reduce((sum, bet) => sum + bet.winnings, 0);
+  const roi = totalStaked > 0 ? (((totalWon - totalStaked) / totalStaked) * 100).toFixed(1) : 0;
+  
+  // === CRÉER L'EMBED ===
+  const embed = new EmbedBuilder()
+    .setColor('#FFD700')
+    .setTitle('📊 Statistiques Détaillées')
+    .setDescription(`**Joueur :** <@${targetUser.id}>`)
+    .addFields(
+      { name: '━━━━━ 💰 FINANCES ━━━━━', value: '\u200b', inline: false },
+      { name: '💵 Solde actuel', value: `${user.balance}€`, inline: true },
+      { name: '📈 Évolution (7j)', value: `${balanceEvolution >= 0 ? '+' : ''}${balanceEvolution}€`, inline: true },
+      { name: '📊 ROI global', value: `${roi}%`, inline: true },
+      
+      { name: '━━━━━ 🎯 PERFORMANCE ━━━━━', value: '\u200b', inline: false },
+      { name: '🎲 Paris totaux', value: `${user.stats.totalBets}`, inline: true },
+      { name: '✅ Winrate', value: `${((user.stats.wonBets / (user.stats.totalBets || 1)) * 100).toFixed(1)}%`, inline: true },
+      { name: '🔥 Winstreak', value: `${user.currentStreak} (record: ${user.bestStreak})`, inline: true },
+      
+      { name: '━━━━━ 💸 MOYENNES ━━━━━', value: '\u200b', inline: false },
+      { name: '💰 Mise moyenne', value: `${avgBet.toFixed(0)}€`, inline: true },
+      { name: '💎 Gain moyen', value: `${avgWin.toFixed(0)}€`, inline: true },
+      { name: '📊 Ratio gain/mise', value: `${(avgWin / avgBet).toFixed(2)}x`, inline: true },
+      
+      { name: '━━━━━ 🎰 TYPE DE PARIS ━━━━━', value: '\u200b', inline: false },
+      { name: '📝 Paris simples', value: `${simpleBets.length} (WR: ${simpleWinrate}%)`, inline: true },
+      { name: '🎰 Combinés', value: `${combiBets.length} (WR: ${combiWinrate}%)`, inline: true },
+      { name: '🏆 Type favori', value: simpleWinrate > combiWinrate ? 'Paris simples' : 'Combinés', inline: true },
+      
+      { name: '━━━━━ ⏰ ANALYSE TEMPORELLE ━━━━━', value: '\u200b', inline: false },
+      { name: '🕐 Meilleure heure', value: `${bestHour}h (WR: ${bestHourWinrate.toFixed(1)}%)`, inline: true },
+      { name: '📅 Meilleur jour', value: `${bestDay.name} (WR: ${((bestDay.won / (bestDay.total || 1)) * 100).toFixed(1)}%)`, inline: true },
+      { name: '🎲 Paris actifs', value: betsByHour[bestHour] ? betsByHour[bestHour].total : 0, inline: true }
+    )
+    .setFooter({ text: '💡 Utilisez !graph pour voir l\'évolution de votre solde' })
+    .setTimestamp();
+  
+  message.reply({ embeds: [embed] });
+}
+
   if (command === '!pari' || command === '!p') {
     const betMessageId = args[1];
     const optionNum = parseInt(args[2]);
@@ -1664,8 +2061,10 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
     const potentialWin = calculatePotentialWin(amount, odds);
 
     // Déduire du solde
-    user.balance -= amount;
-    await user.save();
+const oldBalanceTextBet = user.balance;
+user.balance -= amount;
+await user.save();
+await trackBalanceChange(message.author.id, user.balance, oldBalanceTextBet, 'bet_placed');
 
     // Enregistrer le pari (opération atomique)
     const updateResult = await Bet.findOneAndUpdate(
@@ -1875,8 +2274,10 @@ if (command === '!safe-or-risk' || command === '!sor' || command === '!risk') {
   }
 
   // Déduire la mise
-  user.balance -= amount;
-  await user.save();
+    const oldBalanceStart = user.balance;
+    user.balance -= amount;
+    await user.save();
+    await trackBalanceChange(message.author.id, user.balance, oldBalanceStart, 'safe_or_risk_bet');
 
   // Créer la partie
   const multipliers = getSafeOrRiskMultipliers();
@@ -1940,10 +2341,17 @@ if (command === '!safe-or-risk' || command === '!sor' || command === '!risk') {
     }
 
     const recipient = await getUser(targetUser.id);
-    donor.balance -= amount;
-    recipient.balance += amount;
-    await donor.save();
-    await recipient.save();
+const oldDonorBalance = donor.balance;
+const oldRecipientBalance = recipient.balance;
+
+donor.balance -= amount;
+recipient.balance += amount;
+
+await donor.save();
+await recipient.save();
+
+await trackBalanceChange(message.author.id, donor.balance, oldDonorBalance, 'gift_sent');
+await trackBalanceChange(targetUser.id, recipient.balance, oldRecipientBalance, 'gift_received');
 
     const embed = new EmbedBuilder()
       .setColor('#00FF00')
@@ -1979,8 +2387,10 @@ if (command === '!safe-or-risk' || command === '!sor' || command === '!risk') {
 
     const user = await getUser(targetUser.id);
     const oldBalance = user.balance;
-    user.balance = amount;
-    await user.save();
+const oldBalanceAdmin = user.balance;
+user.balance = amount;
+await user.save();
+await trackBalanceChange(targetUser.id, user.balance, oldBalanceAdmin, 'admin_edit');
 
     const embed = new EmbedBuilder()
       .setColor('#00FF00')
@@ -2018,7 +2428,9 @@ if (command === '!annuler-tout' || command === '!cancelall') {
       if (bet.bettors && Object.keys(bet.bettors).length > 0) {
         for (const [userId, betData] of Object.entries(bet.bettors)) {
           const user = await getUser(userId);
-          user.balance += betData.amount;
+          const oldBalanceRefund = user.balance;
+        user.balance += betData.amount;
+        await trackBalanceChange(userId, user.balance, oldBalanceRefund, 'bet_cancelled');
           refundedAmount += betData.amount;
           await user.save();
         }
@@ -3606,9 +4018,12 @@ user.stats.wonBets++;
 const odds = bet.initialOdds[betData.option];
 const winnings = calculatePotentialWin(betData.amount, odds);
 const profit = winnings - betData.amount;
+const oldBalance = user.balance;
 
 user.balance += winnings;
+await trackBalanceChange(userId, user.balance, oldBalance, 'bet_won');
 totalDistributed += winnings;
+    
 
 // ⭐ GESTION WINSTREAK POUR PARIS SIMPLES
 const streakBonus = await handleWinstreak(user, bet.channelId, {
@@ -3664,6 +4079,7 @@ const streakBonus = await handleWinstreak(user, bet.channelId, {
   }
   
   await user.save();
+  await trackBalanceChange(userId, user.balance, user.balance, 'bet_lost'); // Pas de changement car déjà déduit
 }
 
 // ⭐ AFFICHER LES GAGNANTS DE PARIS SIMPLES
@@ -3770,8 +4186,10 @@ console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${tota
     }
 
     // Déduire le solde
-    user.balance -= basket.totalStake;
-    await user.save();
+const oldBalanceCombi = user.balance;
+user.balance -= basket.totalStake;
+await user.save();
+await trackBalanceChange(userId, user.balance, oldBalanceCombi, 'combi_placed');
 
     // Créer le combiné dans la DB
     const combiId = `combi_${userId}_${Date.now()}`;
