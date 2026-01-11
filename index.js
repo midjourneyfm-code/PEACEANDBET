@@ -540,11 +540,11 @@ function createTowerClimbEmbed(game, floorData) {
 
 function getSlotSymbols() {
   return [
-    { symbol: '🍒', name: 'Cerise', multiplier: 2, weight: 30 },
-    { symbol: '🍋', name: 'Citron', multiplier: 3, weight: 25 },
-    { symbol: '🍊', name: 'Orange', multiplier: 5, weight: 20 },
-    { symbol: '🍇', name: 'Raisin', multiplier: 7, weight: 15 },
-    { symbol: '🔔', name: 'Cloche', multiplier: 10, weight: 7 },
+    { symbol: '🍒', name: 'Cerise', multiplier: 2, weight: 40 },
+    { symbol: '🍋', name: 'Citron', multiplier: 3, weight: 30 },
+    { symbol: '🍊', name: 'Orange', multiplier: 4, weight: 15 },
+    { symbol: '🍇', name: 'Raisin', multiplier: 5, weight: 8 },
+    { symbol: '🔔', name: 'Cloche', multiplier: 8, weight: 4 },
     { symbol: '💎', name: 'Diamant', multiplier: 15, weight: 2 },
     { symbol: '7️⃣', name: 'Sept', multiplier: 30, weight: 1 }
   ];
