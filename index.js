@@ -3853,13 +3853,13 @@ if (command === '!boost') {
     .setColor('#FF00FF')
     .setTitle('⚡💎 PEACE & BOOST 💎⚡')
     .setDescription(`
-╔══════════════════════════════════════════════╗
+╔═══════════════════════════════════════════╗
 ║                                              ║
 ║    🔥 **${eventName}** 🔥    ║
 ║                                              ║
 ║         **COTE BOOSTÉE: ${oddsValue}x**         ║
 ║                                              ║
-╚══════════════════════════════════════════════╝
+╚═══════════════════════════════════════════╝
 
 💰 **Pari à risque, récompense maximale !**
 🚀 **Une seule option, tout ou rien !**
@@ -3890,25 +3890,7 @@ if (command === '!boost') {
     });
   }
 
-  const row = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`bet_PLACEHOLDER_0`)
-        .setLabel(`🔥 PARIER SUR ${eventName.toUpperCase()} (${oddsValue}x) 🔥`)
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('💎')
-    );
-
-  const adminRow = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`cancel_PLACEHOLDER`)
-        .setLabel('Annuler le pari')
-        .setStyle(ButtonStyle.Secondary)
-        .setEmoji('❌')
-    );
-
-  // ⭐ PRÉPARER LE CONTENU AVEC LA MENTION DU RÔLE
+  // ⭐ PRÉPARATION DU CONTENU AVEC LA MENTION DU RÔLE
   const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
   let messageContent = '';
   
@@ -3916,14 +3898,31 @@ if (command === '!boost') {
     messageContent = `${parieurRole} 🔥 **NOUVEAU PARI BOOSTÉ !** 🔥`;
   }
   
-  // ⭐ ENVOYER LE MESSAGE UNE SEULE FOIS AVEC DES PLACEHOLDERS
+  // ⭐ ENVOYER LE MESSAGE SANS BOUTONS D'ABORD
   const betMessage = await message.channel.send({ 
     content: messageContent,
-    embeds: [embed], 
-    components: [row, adminRow] 
+    embeds: [embed]
   });
 
-  // ⭐ MAINTENANT, METTRE À JOUR AVEC LES VRAIS IDs
+  // ⭐ CRÉER LE PARI EN DB AVANT LES BOUTONS
+  const newBet = new Bet({
+    messageId: betMessage.id,
+    question: `⚡ BOOST: ${eventName}`,
+    options: [{ name: eventName, odds: oddsValue }],
+    initialOdds: [oddsValue],
+    bettors: {},
+    creator: message.author.id,
+    channelId: message.channel.id,
+    totalPool: 0,
+    status: 'open',
+    createdAt: new Date(),
+    closingTime: closingTime,
+    reminderSent: false,
+    isBoosted: true
+  });
+  await newBet.save();
+
+  // ⭐ MAINTENANT AJOUTER LES BOUTONS AVEC LE BON ID
   const finalRow = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder()
@@ -3942,28 +3941,10 @@ if (command === '!boost') {
         .setEmoji('❌')
     );
 
-  // ⭐ MODIFIER LE MESSAGE AVEC LES BONS BOUTONS (SANS REENVOYER LE CONTENU)
+  // ⭐ MODIFIER LE MESSAGE AVEC LES BONS BOUTONS
   await betMessage.edit({ 
     components: [finalRow, finalAdminRow] 
   });
-
-  // Créer le pari en DB
-  const newBet = new Bet({
-    messageId: betMessage.id,
-    question: `⚡ BOOST: ${eventName}`,
-    options: [{ name: eventName, odds: oddsValue }],
-    initialOdds: [oddsValue],
-    bettors: {},
-    creator: message.author.id,
-    channelId: message.channel.id,
-    totalPool: 0,
-    status: 'open',
-    createdAt: new Date(),
-    closingTime: closingTime,
-    reminderSent: false,
-    isBoosted: true
-  });
-  await newBet.save();
 
   // Configuration de la clôture automatique
   if (closingTime) {
