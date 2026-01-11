@@ -88,6 +88,22 @@ const User = mongoose.model('User', userSchema);
 const Bet = mongoose.model('Bet', betSchema);
 const DailySpin = mongoose.model('DailySpin', dailySpinSchema);
 
+const placementSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  amount: { type: Number, default: 0 },
+  placedAt: { type: Date, default: null },
+  lastInterestDate: { type: Date, default: null },
+  totalEarned: { type: Number, default: 0 },
+  history: [{
+    amount: Number,
+    interestRate: Number,
+    interestEarned: Number,
+    date: Date
+  }]
+});
+
+const Placement = mongoose.model('Placement', placementSchema);
+
 const combiSchema = new mongoose.Schema({
   combiId: { type: String, required: true, unique: true },
   userId: { type: String, required: true },
@@ -126,6 +142,8 @@ const client = new Client({
 const BETTING_CREATOR_ROLE = 'Créateur de Paris';
 const tempCombis = new Map(); // userId -> { bets: [], totalOdds: 1 }
 const activeSafeOrRiskGames = new Map(); // userId -> { stake, currentMultiplier, round, messageId }
+const activeTowerClimbGames = new Map(); // userId -> { stake, floor, multipliers, safeTiles, messageId }
+const activeLuckySlotsGames = new Map(); // userId -> { stake, spinning, messageId }
 
 // ==================== FONCTIONS UTILITAIRES ====================
 
@@ -459,6 +477,251 @@ function spinRoulette() {
   return 80;                        // 1%
 }
 
+// ==================== TOWER CLIMB ====================
+
+function getTowerClimbMultipliers() {
+  return [
+    { floor: 1, multiplier: 1.2, reward: '💰' },
+    { floor: 2, multiplier: 1.4, reward: '💰' },
+    { floor: 3, multiplier: 1.7, reward: '💎' },
+    { floor: 4, multiplier: 1.9, reward: '💎' },
+    { floor: 5, multiplier: 2, reward: '💎' },
+    { floor: 6, multiplier: 2.2, reward: '✨' },
+    { floor: 7, multiplier: 2.5, reward: '✨' },
+    { floor: 8, multiplier: 3, reward: '✨' },
+    { floor: 9, multiplier: 3.5, reward: '🔥' },
+    { floor: 10, multiplier: 4.5, reward: '🔥' },
+    { floor: 11, multiplier: 10.5, reward: '⚡' },
+    { floor: 12, multiplier: 14.0, reward: '⚡' },
+    { floor: 13, multiplier: 18.0, reward: '👑' },
+    { floor: 14, multiplier: 25.0, reward: '👑' },
+    { floor: 15, multiplier: 50.0, reward: '🏆' }
+  ];
+}
+
+function createTowerClimbEmbed(game, floorData) {
+  const potentialWin = Math.floor(game.stake * floorData.multiplier);
+  const profit = potentialWin - game.stake;
+  
+  let tower = '';
+  const multipliers = getTowerClimbMultipliers();
+  
+  for (let i = 15; i >= 1; i--) {
+    const floor = multipliers[i - 1];
+    if (i > game.floor) {
+      tower += `🔲 Étage ${i} - x${floor.multiplier} ${floor.reward}\n`;
+    } else if (i === game.floor) {
+      tower += `🎯 **ÉTAGE ${i}** - **x${floor.multiplier}** ${floor.reward} ⬅️\n`;
+    } else {
+      tower += `✅ Étage ${i} - x${floor.multiplier} ${floor.reward}\n`;
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor('#9B59B6')
+    .setTitle('🏗️ TOWER CLIMB 🏗️')
+    .setDescription(
+      `**📍 Étage ${game.floor}/15**\n\n` +
+      `\`\`\`\n${tower}\`\`\`\n` +
+      `💰 **Mise de départ :** ${game.stake}€\n` +
+      `📊 **Multiplicateur actuel :** **x${floorData.multiplier}**\n` +
+      `💎 **Gain potentiel :** **${potentialWin}€**\n` +
+      `💸 **Profit :** **+${profit}€**\n\n` +
+      `🎯 **Choisis une tuile !**\n` +
+      `⚠️ 2 tuiles sont sûres ✅, 1 tuile est piégée 💥`
+    )
+    .setFooter({ text: '⚠️ Si tu tombes sur la tuile piégée, tu perds tout !' })
+    .setTimestamp();
+
+  return embed;
+}
+
+// ==================== LUCKY SLOTS ====================
+
+function getSlotSymbols() {
+  return [
+    { symbol: '🍒', name: 'Cerise', multiplier: 1.5, weight: 30 },
+    { symbol: '🍋', name: 'Citron', multiplier: 1.8, weight: 25 },
+    { symbol: '🍊', name: 'Orange', multiplier: 2, weight: 20 },
+    { symbol: '🍇', name: 'Raisin', multiplier: 2.5, weight: 15 },
+    { symbol: '🔔', name: 'Cloche', multiplier: 3, weight: 7 },
+    { symbol: '💎', name: 'Diamant', multiplier: 5, weight: 2 },
+    { symbol: '7️⃣', name: 'Sept', multiplier: 20, weight: 1 }
+  ];
+}
+
+function spinSlot() {
+  const symbols = getSlotSymbols();
+  const totalWeight = symbols.reduce((sum, s) => sum + s.weight, 0);
+  const random = Math.random() * totalWeight;
+  
+  let currentWeight = 0;
+  for (const symbol of symbols) {
+    currentWeight += symbol.weight;
+    if (random <= currentWeight) {
+      return symbol;
+    }
+  }
+  
+  return symbols[0];
+}
+
+function calculateSlotWin(slot1, slot2, slot3, stake) {
+  // 3 symboles identiques
+  if (slot1.symbol === slot2.symbol && slot2.symbol === slot3.symbol) {
+    return {
+      win: Math.floor(stake * slot1.multiplier),
+      type: 'jackpot',
+      message: `🎰 JACKPOT ! 3x ${slot1.name} !`
+    };
+  }
+  
+  // 2 symboles identiques
+  if (slot1.symbol === slot2.symbol || slot2.symbol === slot3.symbol || slot1.symbol === slot3.symbol) {
+    const matchSymbol = slot1.symbol === slot2.symbol ? slot1 : (slot2.symbol === slot3.symbol ? slot2 : slot1);
+    const multiplier = matchSymbol.multiplier * 0.3;
+    return {
+      win: Math.floor(stake * multiplier),
+      type: 'double',
+      message: `💰 Double ${matchSymbol.name} !`
+    };
+  }
+  
+  // Aucune correspondance
+  return {
+    win: 0,
+    type: 'lose',
+    message: '❌ Perdu ! Retentez votre chance !'
+  };
+}
+
+// ==================== PLACEMENT ====================
+
+function calculateRandomInterest() {
+  const random = Math.random() * 100;
+  
+  if (random < 5) return 1;    // 5%
+  if (random < 15) return 2;   // 10%
+  if (random < 25) return 3;   // 10%
+  if (random < 35) return 4;   // 10%
+  if (random < 65) return 5;   // 30% ⭐
+  if (random < 75) return 6;   // 10%
+  if (random < 85) return 7;   // 10%
+  if (random < 92) return 8;   // 7%
+  if (random < 97) return 9;   // 5%
+  return 10;                   // 3%
+}
+
+async function canPlaceToday(userId) {
+  const now = new Date();
+  const currentHour = now.getHours();
+  
+  if (currentHour >= 21) {
+    const nextDay = new Date(now);
+    nextDay.setDate(nextDay.getDate() + 1);
+    nextDay.setHours(21, 0, 0, 0);
+    const hoursUntilNext = Math.ceil((nextDay - now) / (1000 * 60 * 60));
+    return { canPlace: false, hoursUntil: hoursUntilNext };
+  }
+  
+  return { canPlace: true, hoursUntil: 0 };
+}
+
+async function distributeInterests() {
+  try {
+    const placements = await Placement.find({ amount: { $gt: 0 } });
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    let distributedCount = 0;
+    
+    for (const placement of placements) {
+      const lastInterest = placement.lastInterestDate 
+        ? new Date(placement.lastInterestDate.getFullYear(), placement.lastInterestDate.getMonth(), placement.lastInterestDate.getDate())
+        : null;
+      
+      if (lastInterest && lastInterest.getTime() === today.getTime()) {
+        continue;
+      }
+      
+      const placedDate = new Date(placement.placedAt);
+      const minPlacementTime = new Date(today);
+      minPlacementTime.setHours(minPlacementTime.getHours() - 3);
+      
+      if (placedDate > minPlacementTime) {
+        console.log(`⏰ ${placement.userId} a placé trop tard, skip`);
+        continue;
+      }
+      
+      const interestRate = calculateRandomInterest();
+      const interestAmount = Math.floor((placement.amount * interestRate) / 100);
+      const totalReturn = placement.amount + interestAmount;
+      
+      const user = await getUser(placement.userId);
+      const oldBalance = user.balance;
+      user.balance += totalReturn;
+      
+      placement.totalEarned += interestAmount;
+      placement.lastInterestDate = now;
+      placement.history.push({
+        amount: placement.amount,
+        interestRate: interestRate,
+        interestEarned: interestAmount,
+        date: now
+      });
+      
+      const placedAmount = placement.amount;
+      placement.amount = 0;
+      placement.placedAt = null;
+      
+      user.history.push({
+        betId: `placement_${Date.now()}`,
+        question: `Placement bancaire (${interestRate}%)`,
+        option: `Intérêts quotidiens`,
+        amount: placedAmount,
+        winnings: totalReturn,
+        result: 'won',
+        timestamp: new Date()
+      });
+      
+      await user.save();
+      await placement.save();
+      await trackBalanceChange(placement.userId, user.balance, oldBalance, 'placement_interest');
+      
+      try {
+        const userObj = await client.users.fetch(placement.userId);
+        
+        const embed = new EmbedBuilder()
+          .setColor('#00FF00')
+          .setTitle('💰 Intérêts de Placement Versés !')
+          .setDescription(
+            `Votre placement a généré des intérêts !\n\n` +
+            `💵 **Montant placé :** ${placedAmount}€\n` +
+            `📊 **Taux d'intérêt :** ${interestRate}%\n` +
+            `💎 **Intérêts gagnés :** **+${interestAmount}€**\n` +
+            `💰 **Total reçu :** **${totalReturn}€**\n\n` +
+            `💳 **Nouveau solde :** ${user.balance}€`
+          )
+          .setFooter({ text: '💡 Replacez votre argent avec !placement pour continuer à gagner !' })
+          .setTimestamp();
+        
+        await userObj.send({ embeds: [embed] });
+      } catch (error) {
+        console.log(`⚠️ Impossible d'envoyer DM à ${placement.userId}`);
+      }
+      
+      distributedCount++;
+      console.log(`💰 Intérêts versés à ${placement.userId} : ${interestAmount}€ (${interestRate}%)`);
+    }
+    
+    console.log(`✅ Distribution terminée : ${distributedCount} placement(s) traité(s)`);
+    return distributedCount;
+  } catch (error) {
+    console.error('❌ Erreur distribution intérêts:', error);
+    return 0;
+  }
+}
+
 // ==================== VÉRIFICATION DES COMBINÉS ====================
 
 async function checkCombisForBet(messageId, winningOptions) {
@@ -701,6 +964,26 @@ client.once('ready', async () => {
       await closeBetAutomatically(bet.messageId);
     }
   }
+
+    // 💰 Planifier la distribution des intérêts à minuit
+  const scheduleNextInterestDistribution = () => {
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    
+    const timeUntilMidnight = midnight - now;
+    
+    setTimeout(async () => {
+      console.log('🕛 Minuit - Distribution des intérêts...');
+      await distributeInterests();
+      
+      scheduleNextInterestDistribution();
+    }, timeUntilMidnight);
+    
+    console.log(`⏰ Prochaine distribution d'intérêts dans ${Math.floor(timeUntilMidnight / 3600000)}h ${Math.floor((timeUntilMidnight % 3600000) / 60000)}min`);
+  };
+  
+  scheduleNextInterestDistribution();
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -946,6 +1229,318 @@ if (action === 'sor') {
     console.log(`✅ ${interaction.user.tag} passe au tour ${game.round} (x${nextRoundData.multiplier})`);
   }
 }
+
+       if (action === 'tower') {
+      const subaction = interaction.customId.split('_')[1];
+      const userId = interaction.customId.split('_')[2];
+
+      if (interaction.user.id !== userId) {
+        return interaction.reply({ content: '❌ Cette partie n\'est pas la vôtre !', ephemeral: true });
+      }
+
+      const game = activeTowerClimbGames.get(userId);
+
+      if (!game) {
+        return interaction.reply({ content: '❌ Partie introuvable ou expirée.', ephemeral: true });
+      }
+
+      const multipliers = getTowerClimbMultipliers();
+
+      // 💰 ENCAISSER
+      if (subaction === 'cashout') {
+        const currentFloor = multipliers[game.floor - 1];
+        const winnings = Math.floor(game.stake * currentFloor.multiplier);
+        const profit = winnings - game.stake;
+
+        const user = await getUser(userId);
+        const oldBalance = user.balance;
+        user.balance += winnings;
+        user.stats.totalBets++;
+        user.stats.wonBets++;
+        user.history.push({
+          betId: `tower_${Date.now()}`,
+          question: `Tower Climb (Étage ${game.floor})`,
+          option: `Encaissé x${currentFloor.multiplier}`,
+          amount: game.stake,
+          winnings: winnings,
+          result: 'won',
+          timestamp: new Date()
+        });
+
+        await user.save();
+        await trackBalanceChange(userId, user.balance, oldBalance, 'tower_won');
+
+        activeTowerClimbGames.delete(userId);
+
+        const winEmbed = new EmbedBuilder()
+          .setColor('#00FF00')
+          .setTitle('✅ ENCAISSÉ AVEC SUCCÈS !')
+          .setDescription(
+            `🎉 **Félicitations !** Vous avez sécurisé vos gains à l'**étage ${game.floor}** !\n\n` +
+            `💰 **Mise de départ :** ${game.stake}€\n` +
+            `📊 **Multiplicateur :** x${currentFloor.multiplier}\n` +
+            `💎 **Gain total :** **${winnings}€**\n` +
+            `💸 **Profit :** **+${profit}€**\n\n` +
+            `💳 **Nouveau solde :** ${user.balance}€`
+          )
+          .setFooter({ text: '🏗️ Rejouez avec !tower [montant]' })
+          .setTimestamp();
+
+        await interaction.update({ embeds: [winEmbed], components: [] });
+        
+        console.log(`✅ ${interaction.user.tag} encaisse ${winnings}€ à l'étage ${game.floor}`);
+        return;
+      }
+
+      // 🎯 CHOISIR UNE TUILE
+      if (subaction === 'tile') {
+        const tileNumber = parseInt(interaction.customId.split('_')[3]);
+
+        await interaction.deferUpdate();
+
+        // Vérifier si c'est la tuile piégée
+        const isSafe = game.safeTiles.includes(tileNumber);
+
+        if (!isSafe) {
+          // 💥 BOOM - TUILE PIÉGÉE
+          const user = await getUser(userId);
+          user.stats.totalBets++;
+          user.stats.lostBets++;
+          user.history.push({
+            betId: `tower_${Date.now()}`,
+            question: `Tower Climb (Étage ${game.floor})`,
+            option: `Boom tuile ${tileNumber}`,
+            amount: game.stake,
+            winnings: 0,
+            result: 'lost',
+            timestamp: new Date()
+          });
+          await user.save();
+
+          activeTowerClimbGames.delete(userId);
+
+          const loseEmbed = new EmbedBuilder()
+            .setColor('#FF0000')
+            .setTitle('💥 BOOOOM ! 💥')
+            .setDescription(
+              `😱 **Vous êtes tombé sur la tuile piégée à l'étage ${game.floor} !**\n\n` +
+              `💸 **Mise perdue :** ${game.stake}€\n` +
+              `📊 **Vous étiez à :** x${multipliers[game.floor - 1].multiplier}\n` +
+              `💔 **Vous auriez pu gagner :** ${Math.floor(game.stake * multipliers[game.floor - 1].multiplier)}€\n\n` +
+              `💳 **Solde actuel :** ${user.balance}€`
+            )
+            .setFooter({ text: '🔄 Retentez votre chance avec !tower [montant]' })
+            .setTimestamp();
+
+          await interaction.editReply({ embeds: [loseEmbed], components: [] });
+          
+          console.log(`💥 ${interaction.user.tag} explose à l'étage ${game.floor} (perte: ${game.stake}€)`);
+          return;
+        }
+
+        // ✅ TUILE SÛRE - MONTER D'UN ÉTAGE
+        game.floor++;
+
+        if (game.floor > 15) {
+          // 🏆 VICTOIRE TOTALE - SOMMET ATTEINT
+          const finalWinnings = Math.floor(game.stake * 50);
+          const profit = finalWinnings - game.stake;
+
+          const user = await getUser(userId);
+          const oldBalance = user.balance;
+          user.balance += finalWinnings;
+          user.stats.totalBets++;
+          user.stats.wonBets++;
+          user.history.push({
+            betId: `tower_${Date.now()}`,
+            question: `Tower Climb (SOMMET)`,
+            option: `Complété x50`,
+            amount: game.stake,
+            winnings: finalWinnings,
+            result: 'won',
+            timestamp: new Date()
+          });
+          
+          await user.save();
+          await trackBalanceChange(userId, user.balance, oldBalance, 'tower_jackpot');
+
+          activeTowerClimbGames.delete(userId);
+
+          const jackpotEmbed = new EmbedBuilder()
+            .setColor('#FFD700')
+            .setTitle('🏆🎰 SOMMET ATTEINT ! 🎰🏆')
+            .setDescription(
+              `🎉🎉🎉 **INCROYABLE !** 🎉🎉🎉\n\n` +
+              `Vous avez grimpé jusqu'au **SOMMET** sans tomber !\n\n` +
+              `💰 **Mise :** ${game.stake}€\n` +
+              `⭐ **Multiplicateur final :** **x50**\n` +
+              `💎 **GAIN TOTAL :** **${finalWinnings}€**\n` +
+              `💸 **Profit :** **+${profit}€**\n\n` +
+              `💳 **Nouveau solde :** ${user.balance}€`
+            )
+            .setFooter({ text: `🎊 Bravo ${interaction.user.tag} ! Performance exceptionnelle ! 🎊` })
+            .setTimestamp();
+
+          await interaction.editReply({ embeds: [jackpotEmbed], components: [] });
+          
+          console.log(`🏆 ${interaction.user.tag} atteint le sommet : ${finalWinnings}€`);
+          return;
+        }
+
+        // Générer de nouvelles tuiles sûres pour le prochain étage
+        const allTiles = [1, 2, 3];
+        const shuffled = allTiles.sort(() => Math.random() - 0.5);
+        game.safeTiles = shuffled.slice(0, 2);
+
+        // Afficher le nouvel étage
+        const nextFloorData = multipliers[game.floor - 1];
+        const nextEmbed = createTowerClimbEmbed(game, nextFloorData);
+
+        const nextRow = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId(`tower_tile_${userId}_1`)
+              .setLabel('Tuile 1')
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji('🟦'),
+            new ButtonBuilder()
+              .setCustomId(`tower_tile_${userId}_2`)
+              .setLabel('Tuile 2')
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji('🟦'),
+            new ButtonBuilder()
+              .setCustomId(`tower_tile_${userId}_3`)
+              .setLabel('Tuile 3')
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji('🟦')
+          );
+
+        const cashoutRow = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId(`tower_cashout_${userId}`)
+              .setLabel(`💰 ENCAISSER ${Math.floor(game.stake * nextFloorData.multiplier)}€`)
+              .setStyle(ButtonStyle.Success)
+              .setEmoji('✅')
+          );
+
+        await interaction.editReply({ embeds: [nextEmbed], components: [nextRow, cashoutRow] });
+        
+        console.log(`✅ ${interaction.user.tag} monte à l'étage ${game.floor}`);
+      }
+    }
+
+    if (action === 'slots') {
+      const subaction = interaction.customId.split('_')[1];
+      const userId = interaction.customId.split('_')[2];
+
+      if (interaction.user.id !== userId) {
+        return interaction.reply({ content: '❌ Ce jeu n\'est pas le vôtre !', ephemeral: true });
+      }
+
+      if (subaction === 'spin') {
+        const game = activeLuckySlotsGames.get(userId);
+
+        if (!game) {
+          return interaction.reply({ content: '❌ Partie introuvable.', ephemeral: true });
+        }
+
+        await interaction.deferUpdate();
+
+        // Animation de spin
+        const spinningEmbed = new EmbedBuilder()
+          .setColor('#FFA500')
+          .setTitle('🎰 LUCKY SLOTS 🎰')
+          .setDescription(
+            `🎲 **Les rouleaux tournent...**\n\n` +
+            `\`\`\`\n` +
+            `┏━━━┳━━━┳━━━┓\n` +
+            `┃ ❓ ┃ ❓ ┃ ❓ ┃\n` +
+            `┗━━━┻━━━┻━━━┛\n` +
+            `\`\`\`\n\n` +
+            `💰 Mise : ${game.stake}€`
+          )
+          .setFooter({ text: '🎰 Bonne chance !' });
+
+        await interaction.editReply({ embeds: [spinningEmbed], components: [] });
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Tirer les 3 slots
+        const slot1 = spinSlot();
+        const slot2 = spinSlot();
+        const slot3 = spinSlot();
+
+        const result = calculateSlotWin(slot1, slot2, slot3, game.stake);
+
+        const user = await getUser(userId);
+        user.stats.totalBets++;
+
+        if (result.win > 0) {
+          user.stats.wonBets++;
+          const oldBalance = user.balance;
+          user.balance += result.win;
+          user.history.push({
+            betId: `slots_${Date.now()}`,
+            question: `Lucky Slots`,
+            option: `${slot1.symbol} ${slot2.symbol} ${slot3.symbol}`,
+            amount: game.stake,
+            winnings: result.win,
+            result: 'won',
+            timestamp: new Date()
+          });
+          await user.save();
+          await trackBalanceChange(userId, user.balance, oldBalance, 'slots_won');
+        } else {
+          user.stats.lostBets++;
+          user.history.push({
+            betId: `slots_${Date.now()}`,
+            question: `Lucky Slots`,
+            option: `${slot1.symbol} ${slot2.symbol} ${slot3.symbol}`,
+            amount: game.stake,
+            winnings: 0,
+            result: 'lost',
+            timestamp: new Date()
+          });
+          await user.save();
+        }
+
+        activeLuckySlotsGames.delete(userId);
+
+        const color = result.win > 0 ? (result.type === 'jackpot' ? '#FFD700' : '#00FF00') : '#FF0000';
+        const resultEmbed = new EmbedBuilder()
+          .setColor(color)
+          .setTitle('🎰 LUCKY SLOTS 🎰')
+          .setDescription(
+            `\`\`\`\n` +
+            `┏━━━┳━━━┳━━━┓\n` +
+            `┃ ${slot1.symbol} ┃ ${slot2.symbol} ┃ ${slot3.symbol} ┃\n` +
+            `┗━━━┻━━━┻━━━┛\n` +
+            `\`\`\`\n\n` +
+            `${result.message}\n\n` +
+            `💰 **Mise :** ${game.stake}€\n` +
+            (result.win > 0 ? 
+              `💎 **Gain :** **${result.win}€**\n` +
+              `💸 **Profit :** **+${result.win - game.stake}€**\n` :
+              `💸 **Perte :** -${game.stake}€\n`) +
+            `\n💳 **Solde actuel :** ${user.balance}€`
+          )
+          .setFooter({ text: '🎰 Rejouez avec !slots [montant]' })
+          .setTimestamp();
+
+        // Afficher les probabilités
+        const symbols = getSlotSymbols();
+        let probText = '\n**📊 Tableau des gains :**\n';
+        symbols.forEach(s => {
+          probText += `${s.symbol} x3 = x${s.multiplier}\n`;
+        });
+        resultEmbed.addFields({ name: '💡 Multiplicateurs', value: probText });
+
+        await interaction.editReply({ embeds: [resultEmbed], components: [] });
+
+        console.log(`🎰 ${interaction.user.tag} : ${slot1.symbol} ${slot2.symbol} ${slot3.symbol} - ${result.win > 0 ? `+${result.win}€` : `perdu`}`);
+      }
+    }
     
     if (action === 'bet') {
       const optionIndex = parseInt(params[0]);
@@ -2246,6 +2841,394 @@ if (command === '!safe-or-risk' || command === '!sor' || command === '!risk') {
 
   console.log(`🎲 ${message.author.tag} lance Safe or Risk avec ${amount}€`);
 }
+
+    if (command === '!tower' || command === '!tower-climb' || command === '!climb') {
+    const amount = parseInt(args[1]);
+
+    if (!amount || isNaN(amount) || amount <= 0) {
+      return message.reply(
+        '❌ **Format incorrect !**\n\n' +
+        '📋 **Usage :** `!tower <montant>`\n' +
+        '📌 **Exemple :** `!tower 100`\n\n' +
+        '🏗️ **RÈGLES DU JEU :**\n' +
+        '• Grimpe une tour de **15 étages**\n' +
+        '• À chaque étage : choisis 1 tuile parmi 3\n' +
+        '• **2 tuiles sûres ✅** / **1 tuile piégée 💥**\n' +
+        '• Plus tu montes, plus le multiplicateur augmente\n' +
+        '• Encaisse quand tu veux ou tente le sommet !\n' +
+        '• Si tu tombes sur la tuile piégée : **TOUT PERDU** 💥\n\n' +
+        '🏆 **Sommet (étage 15) = x50 !**\n\n' +
+        '📢 **Alias :** `!tower-climb`, `!climb`'
+      );
+    }
+
+    if (activeTowerClimbGames.has(message.author.id)) {
+      return message.reply('❌ Vous avez déjà une partie en cours ! Terminez-la avant d\'en commencer une nouvelle.');
+    }
+
+    const user = await getUser(message.author.id);
+    if (user.balance < amount) {
+      return message.reply(`❌ Solde insuffisant. Vous avez **${user.balance}€**.`);
+    }
+
+    const oldBalance = user.balance;
+    user.balance -= amount;
+    await user.save();
+    await trackBalanceChange(message.author.id, user.balance, oldBalance, 'tower_bet');
+
+    // Générer les tuiles sûres pour l'étage 1
+    const allTiles = [1, 2, 3];
+    const shuffled = allTiles.sort(() => Math.random() - 0.5);
+    const safeTiles = shuffled.slice(0, 2);
+
+    const game = {
+      stake: amount,
+      floor: 1,
+      safeTiles: safeTiles,
+      userId: message.author.id
+    };
+
+    const multipliers = getTowerClimbMultipliers();
+    const embed = createTowerClimbEmbed(game, multipliers[0]);
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`tower_tile_${message.author.id}_1`)
+          .setLabel('Tuile 1')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('🟦'),
+        new ButtonBuilder()
+          .setCustomId(`tower_tile_${message.author.id}_2`)
+          .setLabel('Tuile 2')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('🟦'),
+        new ButtonBuilder()
+          .setCustomId(`tower_tile_${message.author.id}_3`)
+          .setLabel('Tuile 3')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('🟦')
+      );
+
+    const gameMessage = await message.reply({ embeds: [embed], components: [row] });
+    
+    game.messageId = gameMessage.id;
+    activeTowerClimbGames.set(message.author.id, game);
+
+    console.log(`🏗️ ${message.author.tag} lance Tower Climb avec ${amount}€`);
+  }
+
+  if (command === '!slots' || command === '!slot' || command === '!machine') {
+    const amount = parseInt(args[1]);
+
+    if (!amount || isNaN(amount) || amount <= 0) {
+      const symbols = getSlotSymbols();
+      let probText = '';
+      symbols.forEach(s => {
+        probText += `${s.symbol} x3 = **x${s.multiplier}** | `;
+      });
+
+      return message.reply(
+        '❌ **Format incorrect !**\n\n' +
+        '📋 **Usage :** `!slots <montant>`\n' +
+        '📌 **Exemple :** `!slots 50`\n\n' +
+        '🎰 **RÈGLES DU JEU :**\n' +
+        '• Machine à sous avec 3 rouleaux\n' +
+        '• **3 symboles identiques = JACKPOT !**\n' +
+        '• **2 symboles identiques = 30% du jackpot**\n' +
+        '• Plus le symbole est rare, plus il rapporte !\n\n' +
+        '💎 **Tableau des gains :**\n' +
+        probText + '\n\n' +
+        '📢 **Alias :** `!slot`, `!machine`'
+      );
+    }
+
+    if (activeLuckySlotsGames.has(message.author.id)) {
+      return message.reply('❌ Vous avez déjà une partie en cours !');
+    }
+
+    const user = await getUser(message.author.id);
+    if (user.balance < amount) {
+      return message.reply(`❌ Solde insuffisant. Vous avez **${user.balance}€**.`);
+    }
+
+    const oldBalance = user.balance;
+    user.balance -= amount;
+    await user.save();
+    await trackBalanceChange(message.author.id, user.balance, oldBalance, 'slots_bet');
+
+    const game = {
+      stake: amount,
+      userId: message.author.id
+    };
+
+    const embed = new EmbedBuilder()
+      .setColor('#FFD700')
+      .setTitle('🎰 LUCKY SLOTS 🎰')
+      .setDescription(
+        `Prêt à tenter votre chance ?\n\n` +
+        `💰 **Mise :** ${amount}€\n` +
+        `💳 **Solde restant :** ${user.balance}€\n\n` +
+        `🎯 **Objectif :** Aligner 3 symboles identiques !`
+      )
+      .setFooter({ text: 'Cliquez sur SPIN pour lancer les rouleaux !' })
+      .setTimestamp();
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`slots_spin_${message.author.id}`)
+          .setLabel('🎰 SPIN !')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('🎲')
+      );
+
+    const gameMessage = await message.reply({ embeds: [embed], components: [row] });
+    
+    game.messageId = gameMessage.id;
+    activeLuckySlotsGames.set(message.author.id, game);
+
+    console.log(`🎰 ${message.author.tag} lance Lucky Slots avec ${amount}€`);
+  }
+
+  if (command === '!placement' || command === '!place' || command === '!invest') {
+    const subcommand = args[1];
+    
+    if (!subcommand || subcommand === 'info' || subcommand === 'status') {
+      const placement = await Placement.findOne({ userId: message.author.id });
+      const user = await getUser(message.author.id);
+      
+      const embed = new EmbedBuilder()
+        .setColor('#FFD700')
+        .setTitle('💰 Système de Placement Bancaire')
+        .setDescription(
+          '**📊 Comment ça marche ?**\n' +
+          '• Place ton argent et reçois des intérêts **chaque jour à minuit**\n' +
+          '• Taux d\'intérêt aléatoire entre **1% et 10%**\n' +
+          '• Plus de chances d\'obtenir **5%** (optimal)\n' +
+          '• ⚠️ Tu dois placer **avant 21h** pour recevoir les intérêts du jour\n\n' +
+          '**💡 Commandes disponibles :**\n' +
+          '• `!placement placer [montant]` - Placer de l\'argent\n' +
+          '• `!placement-cancel` - Annuler ton placement avant minuit\n' +
+          '• `!placement info` - Voir ton statut\n' +
+          '• `!placement historique` - Voir tes gains passés'
+        )
+        .addFields(
+          { name: '💳 Ton solde disponible', value: `${user.balance}€`, inline: true },
+          { name: '💵 Montant placé', value: placement && placement.amount > 0 ? `${placement.amount}€` : 'Aucun', inline: true },
+          { name: '📈 Total gagné', value: placement ? `${placement.totalEarned}€` : '0€', inline: true }
+        )
+        .setFooter({ text: '💡 Les intérêts sont versés à minuit (00h00)' })
+        .setTimestamp();
+      
+      if (placement && placement.amount > 0) {
+        const placedDate = new Date(placement.placedAt);
+        embed.addFields({
+          name: '⏰ Placé le',
+          value: placedDate.toLocaleString('fr-FR', { 
+            timeZone: 'Europe/Paris',
+            day: 'numeric',
+            month: 'long',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+        });
+      }
+      
+      return message.reply({ embeds: [embed] });
+    }
+    
+    if (subcommand === 'placer' || subcommand === 'place' || subcommand === 'invest') {
+      const amount = parseInt(args[2]);
+      
+      if (!amount || isNaN(amount) || amount <= 0) {
+        return message.reply('❌ Montant invalide.\n\n**Usage :** `!placement placer [montant]`\n**Exemple :** `!placement placer 500`');
+      }
+      
+      const { canPlace, hoursUntil } = await canPlaceToday(message.author.id);
+      
+      if (!canPlace) {
+        return message.reply(
+          `⏰ **Il est trop tard pour placer aujourd'hui !**\n\n` +
+          `Les placements doivent être effectués **avant 21h** pour recevoir les intérêts à minuit.\n\n` +
+          `⏳ Prochain placement possible dans **${hoursUntil}h**`
+        );
+      }
+      
+      const user = await getUser(message.author.id);
+      
+      if (user.balance < amount) {
+        return message.reply(`❌ Solde insuffisant. Vous avez **${user.balance}€**.`);
+      }
+      
+      let placement = await Placement.findOne({ userId: message.author.id });
+      
+      if (placement && placement.amount > 0) {
+        return message.reply(
+          `⚠️ **Vous avez déjà un placement en cours !**\n\n` +
+          `💵 Montant placé : **${placement.amount}€**\n\n` +
+          `💡 Utilisez \`!placement-cancel\` pour annuler et replacer.`
+        );
+      }
+      
+      const oldBalance = user.balance;
+      user.balance -= amount;
+      await user.save();
+      await trackBalanceChange(message.author.id, user.balance, oldBalance, 'placement_placed');
+      
+      if (!placement) {
+        placement = new Placement({
+          userId: message.author.id,
+          amount: amount,
+          placedAt: new Date(),
+          totalEarned: 0,
+          history: []
+        });
+      } else {
+        placement.amount = amount;
+        placement.placedAt = new Date();
+      }
+      
+      await placement.save();
+      
+      const embed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('✅ Placement Effectué !')
+        .setDescription(
+          `Votre argent est maintenant placé et génèrera des intérêts !\n\n` +
+          `💵 **Montant placé :** ${amount}€\n` +
+          `📊 **Taux attendu :** Entre 1% et 10%\n` +
+          `⏰ **Intérêts versés :** À minuit (00h00)\n\n` +
+          `💰 **Gain minimum :** ${Math.floor(amount * 0.01)}€ (1%)\n` +
+          `💎 **Gain maximum :** ${Math.floor(amount * 0.10)}€ (10%)\n` +
+          `🎯 **Gain probable :** ${Math.floor(amount * 0.05)}€ (5%)\n\n` +
+          `💳 **Nouveau solde :** ${user.balance}€`
+        )
+        .setFooter({ text: '💡 Vous recevrez un message privé à minuit avec vos intérêts !' })
+        .setTimestamp();
+      
+      message.reply({ embeds: [embed] });
+      
+      console.log(`💰 ${message.author.tag} a placé ${amount}€`);
+    }
+    
+    if (subcommand === 'historique' || subcommand === 'history' || subcommand === 'hist') {
+      const placement = await Placement.findOne({ userId: message.author.id });
+      
+      if (!placement || placement.history.length === 0) {
+        return message.reply('📊 Vous n\'avez aucun historique de placement.');
+      }
+      
+      const recentHistory = placement.history.slice(-5).reverse();
+      
+      const embed = new EmbedBuilder()
+        .setColor('#FFD700')
+        .setTitle('📜 Historique de Placement')
+        .setDescription(`Vos 5 derniers placements :\n`)
+        .setTimestamp();
+      
+      for (const entry of recentHistory) {
+        const date = new Date(entry.date).toLocaleDateString('fr-FR', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+        
+        embed.addFields({
+          name: `💰 ${date}`,
+          value: 
+            `• Montant : ${entry.amount}€\n` +
+            `• Taux : ${entry.interestRate}%\n` +
+            `• Intérêts : **+${entry.interestEarned}€**\n` +
+            `• Total reçu : **${entry.amount + entry.interestEarned}€**`,
+          inline: false
+        });
+      }
+      
+      embed.addFields({
+        name: '📈 Total Cumulé',
+        value: `Vous avez gagné **${placement.totalEarned}€** d'intérêts au total !`,
+        inline: false
+      });
+      
+      message.reply({ embeds: [embed] });
+    }
+  }
+
+  if (command === '!placement-cancel' || command === '!pc') {
+    const placement = await Placement.findOne({ userId: message.author.id });
+    
+    if (!placement || placement.amount === 0) {
+      return message.reply('❌ Vous n\'avez aucun placement en cours.');
+    }
+    
+    // Vérifier qu'on est avant minuit
+    const now = new Date();
+    const currentHour = now.getHours();
+    
+    if (currentHour >= 0 && currentHour < 1) {
+      return message.reply(
+        `⏰ **Trop tard pour annuler !**\n\n` +
+        `La distribution des intérêts est en cours ou a déjà eu lieu.\n` +
+        `Vous recevrez vos intérêts sous peu.`
+      );
+    }
+    
+    const user = await getUser(message.author.id);
+    const oldBalance = user.balance;
+    const refundAmount = placement.amount;
+    
+    user.balance += refundAmount;
+    await user.save();
+    await trackBalanceChange(message.author.id, user.balance, oldBalance, 'placement_cancelled');
+    
+    placement.amount = 0;
+    placement.placedAt = null;
+    await placement.save();
+    
+    const embed = new EmbedBuilder()
+      .setColor('#FFA500')
+      .setTitle('🚫 Placement Annulé')
+      .setDescription(
+        `Vous avez annulé votre placement.\n\n` +
+        `💵 **Montant récupéré :** ${refundAmount}€\n` +
+        `⚠️ **Intérêts perdus :** Vous ne recevrez pas d'intérêts pour ce placement\n\n` +
+        `💳 **Nouveau solde :** ${user.balance}€`
+      )
+      .setFooter({ text: '💡 Vous pouvez replacer immédiatement avec !placement placer [montant]' })
+      .setTimestamp();
+    
+    message.reply({ embeds: [embed] });
+    
+    console.log(`🚫 ${message.author.tag} a annulé son placement de ${refundAmount}€`);
+  }
+
+  if (command === '!test-placement' || command === '!tp') {
+    const member = await message.guild.members.fetch(message.author.id);
+    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+
+    if (!hasRole) {
+      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour cette commande.`);
+    }
+
+    message.reply('🧪 **Test de distribution des intérêts en cours...**');
+
+    const count = await distributeInterests();
+
+    const embed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ Test Terminé')
+      .setDescription(`Distribution manuelle des intérêts effectuée.`)
+      .addFields(
+        { name: '📊 Placements traités', value: `${count}`, inline: true },
+        { name: '⏰ Heure du test', value: new Date().toLocaleTimeString('fr-FR'), inline: true }
+      )
+      .setTimestamp();
+
+    message.channel.send({ embeds: [embed] });
+
+    console.log(`🧪 ${message.author.tag} a testé la distribution (${count} placements)`);
+  }
 
   if (command === '!don' || command === '!give') {
     const targetUser = message.mentions.users.first();
