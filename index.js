@@ -1156,6 +1156,20 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     const [action, betId, ...params] = interaction.customId.split('_');
 
+        if (action === 'profile' && params[0] === 'filter') {
+  const targetUserId = params[1];
+  const filter = params[2];
+  
+  const targetUser = await client.users.fetch(targetUserId);
+  const user = await getUser(targetUserId);
+  
+  const embed = await createProfileEmbed(targetUser, user, filter);
+  const buttons = createProfileButtons(targetUserId, filter);
+  
+  await interaction.update({ embeds: [embed], components: [buttons] });
+}
+
+
 if (action === 'sor') {
   // ⭐ CORRECTION : Le parsing était incorrect
   // customId format: "sor_continue_123456789" ou "sor_cashout_123456789" ou "sor_cancel_123456789"
@@ -1864,19 +1878,6 @@ await trackBalanceChange(message.author.id, user.balance, oldBalanceCombiCancel,
     return; // Important pour ne pas continuer le traitement
   }
     
-    if (action === 'profile' && params[0] === 'filter') {
-  const targetUserId = params[1];
-  const filter = params[2];
-  
-  const targetUser = await client.users.fetch(targetUserId);
-  const user = await getUser(targetUserId);
-  
-  const embed = await createProfileEmbed(targetUser, user, filter);
-  const buttons = createProfileButtons(targetUserId, filter);
-  
-  await interaction.update({ embeds: [embed], components: [buttons] });
-}
-
     if (action === 'leaderboard') {
       const sortBy = params[0];
       
