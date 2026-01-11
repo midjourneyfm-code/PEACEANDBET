@@ -576,19 +576,18 @@ function calculateSlotWin(slot1, slot2, slot3, stake) {
     };
   }
   
-  // 2 symboles identiques - récupération de la mise + moitié du multiplicateur
+  // 2 symboles identiques - moitié du multiplicateur uniquement (pas de récupération de mise)
   if (slot1.symbol === slot2.symbol || slot2.symbol === slot3.symbol || slot1.symbol === slot3.symbol) {
     const matchSymbol = slot1.symbol === slot2.symbol ? slot1 : (slot2.symbol === slot3.symbol ? slot2 : slot1);
     
-    // Formule : mise * (1 + multiplicateur/2)
-    // Ex: Citron x3, mise 100€ → 100 * (1 + 3/2) = 100 * 2.5 = 250€
+    // Formule : mise * (multiplicateur/2)
+    // Ex: Citron x3, mise 100€ → 100 * (3/2) = 100 * 1.5 = 150€
     const halfMultiplier = matchSymbol.multiplier / 2;
-    const totalMultiplier = 1 + halfMultiplier; // Récupération mise + moitié gain
     
     return {
-      win: Math.floor(stake * totalMultiplier),
+      win: Math.floor(stake * halfMultiplier),
       type: 'double',
-      message: `💰 Double ${matchSymbol.name} ! (x${totalMultiplier})`
+      message: `💰 Double ${matchSymbol.name} ! (x${halfMultiplier})`
     };
   }
   
