@@ -1518,7 +1518,7 @@ client.on('messageCreate', async (message) => {
   await loadingMsg.edit({ embeds: [resultEmbed] });
 }
 
-if (command === '!profil' || command === '!profile' || command === '!stats') {
+if (command === '!profil' || command === '!profile' || command === '!p') {
   const targetUser = message.mentions.users.first() || message.author;
   const user = await getUser(targetUser.id);
   const winrate = await calculateWinrate(targetUser.id);
@@ -1638,8 +1638,8 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
   message.reply({ embeds: [embed] });
 }
 
-  if (command === '!graph' || command === '!graphique') {
-  const period = args[1] || '30d'; // 7d, 30d, 90d, all
+if (command === '!graph' || command === '!graphique') {
+  const period = args[1] || '30d';
   const targetUser = message.mentions.users.first() || message.author;
   
   let daysAgo;
@@ -1698,163 +1698,93 @@ if (command === '!profil' || command === '!profile' || command === '!stats') {
   const totalChange = currentBalance - startBalance;
   const changePercent = ((totalChange / startBalance) * 100).toFixed(1);
   
-  // Créer un graphique ASCII simple
-  const graphHeight = 10;
-  const graphWidth = 40;
+  // ⭐ NOUVEAU GRAPHIQUE PLUS LISIBLE ⭐
+  const graphHeight = 12;
+  const graphWidth = 50;
   const range = maxBalance - minBalance || 1;
   
+  // Créer le graphique ligne par ligne
   let graph = '';
+  
   for (let y = graphHeight; y >= 0; y--) {
     const threshold = minBalance + (range * y / graphHeight);
     let line = '';
     
+    // Afficher le label de prix sur la gauche
+    const label = Math.round(threshold).toString().padStart(6);
+    
+    // Construire la ligne du graphique
     for (let x = 0; x < graphWidth; x++) {
       const dataIndex = Math.floor((history.length - 1) * x / (graphWidth - 1));
       const value = balances[dataIndex];
+      const prevValue = x > 0 ? balances[Math.floor((history.length - 1) * (x - 1) / (graphWidth - 1))] : value;
       
+      // Déterminer le caractère à afficher
       if (Math.abs(value - threshold) < range / (graphHeight * 2)) {
-        line += '●';
+        // Point sur la courbe
+        if (value > prevValue) {
+          line += '╱'; // Montée
+        } else if (value < prevValue) {
+          line += '╲'; // Descente
+        } else {
+          line += '━'; // Stable
+        }
       } else if (value > threshold) {
-        line += '│';
+        // Au-dessus de la courbe
+        line += ' ';
       } else {
+        // En dessous de la courbe
         line += ' ';
       }
     }
     
-    const label = Math.round(threshold).toString().padStart(5);
-    graph += `${label}€ ${line}\n`;
+    // Ajouter la ligne avec le label
+    graph += `${label}€ │${line}│\n`;
   }
+  
+  // Ajouter l'axe horizontal
+  graph += '       └' + '─'.repeat(graphWidth) + '┘\n';
+  
+  // Ajouter les dates en bas
+  const startDate = history[0].timestamp.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+  const endDate = history[history.length - 1].timestamp.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+  const spacing = ' '.repeat(Math.max(0, graphWidth - startDate.length - endDate.length - 2));
+  graph += `        ${startDate}${spacing}${endDate}`;
   
   // Points de données marquants
   const wins = history.filter(h => h.reason && h.reason.includes('won')).length;
   const losses = history.filter(h => h.reason && h.reason.includes('lost')).length;
   
+  // ⭐ EMBED AMÉLIORÉ ⭐
   const embed = new EmbedBuilder()
     .setColor(totalChange >= 0 ? '#00FF00' : '#FF0000')
     .setTitle(`📈 Évolution du Solde - ${periodLabel}`)
     .setDescription(
       `**Joueur :** <@${targetUser.id}>\n\n` +
-      '```\n' + graph + '\n' +
-      '      └' + '─'.repeat(graphWidth - 2) + '┘\n' +
-      `      ${history[0].timestamp.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}` +
-      ' '.repeat(graphWidth - 20) +
-      `${history[history.length - 1].timestamp.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}\n` +
-      '```'
+      '```\n' + graph + '\n```'
     )
     .addFields(
-      { name: '💰 Solde actuel', value: `${currentBalance}€`, inline: true },
-      { name: '📊 Variation', value: `${totalChange >= 0 ? '+' : ''}${totalChange}€ (${changePercent >= 0 ? '+' : ''}${changePercent}%)`, inline: true },
+      { name: '━━━━━ 💰 ÉTAT ACTUEL ━━━━━', value: '\u200b', inline: false },
+      { name: '💵 Solde actuel', value: `**${currentBalance}€**`, inline: true },
+      { name: '📊 Variation', value: `**${totalChange >= 0 ? '+' : ''}${totalChange}€**\n(${changePercent >= 0 ? '+' : ''}${changePercent}%)`, inline: true },
       { name: '\u200b', value: '\u200b', inline: true },
+      
+      { name: '━━━━━ 📊 EXTRÊMES ━━━━━', value: '\u200b', inline: false },
       { name: '📈 Maximum', value: `${maxBalance}€`, inline: true },
       { name: '📉 Minimum', value: `${minBalance}€`, inline: true },
-      { name: '\u200b', value: '\u200b', inline: true },
+      { name: '📏 Amplitude', value: `${maxBalance - minBalance}€`, inline: true },
+      
+      { name: '━━━━━ 🎯 ACTIVITÉ ━━━━━', value: '\u200b', inline: false },
       { name: '✅ Paris gagnés', value: `${wins}`, inline: true },
       { name: '❌ Paris perdus', value: `${losses}`, inline: true },
       { name: '📅 Points de données', value: `${history.length}`, inline: true }
     )
-    .setFooter({ text: `💡 Utilisez !graph [7d/30d/90d/all] pour changer la période` })
+    .setFooter({ text: '💡 Utilisez !graph [7d/30d/90d/all] pour changer la période' })
     .setTimestamp();
   
   message.reply({ embeds: [embed] });
 }
 
-  if (command === '!analysis' || command === '!analyse') {
-  const targetUser = message.mentions.users.first() || message.author;
-  const user = await getUser(targetUser.id);
-  
-  // Récupérer l'historique des 30 derniers jours
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
-  const recentHistory = await BalanceHistory.find({
-    userId: targetUser.id,
-    timestamp: { $gte: thirtyDaysAgo }
-  }).sort({ timestamp: 1 });
-  
-  if (recentHistory.length === 0) {
-    return message.reply('📊 Pas assez de données pour effectuer une analyse.');
-  }
-  
-  // Préparer les données pour l'IA
-  const stats = user.stats;
-  const winrate = stats.totalBets > 0 ? ((stats.wonBets / stats.totalBets) * 100).toFixed(1) : 0;
-  
-  const balanceChanges = recentHistory.map(h => h.change);
-  const avgChange = balanceChanges.reduce((a, b) => a + b, 0) / balanceChanges.length;
-  
-  const bigWins = user.history.filter(h => h.result === 'won' && h.winnings > 100).length;
-  const bigLosses = user.history.filter(h => h.result === 'lost' && h.amount > 50).length;
-  
-  const combiCount = user.history.filter(h => h.betId && h.betId.startsWith('combi_')).length;
-  const simpleCount = user.history.filter(h => !h.betId || !h.betId.startsWith('combi_')).length;
-  
-  // Appel à l'API Claude
-  const loadingMsg = await message.reply('🤖 **Analyse en cours...**\nClaude analyse votre profil de parieur...');
-  
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        messages: [
-          { 
-            role: "user", 
-            content: `Tu es un expert en paris sportifs. Analyse ce profil de joueur et donne des recommandations en français.
-
-**Statistiques du joueur :**
-- Solde actuel : ${user.balance}€
-- Total de paris : ${stats.totalBets}
-- Paris gagnés : ${stats.wonBets}
-- Paris perdus : ${stats.lostBets}
-- Winrate : ${winrate}%
-- Winstreak actuelle : ${user.currentStreak}
-- Meilleur winstreak : ${user.bestStreak}
-- Variation moyenne quotidienne : ${avgChange.toFixed(2)}€
-- Gros gains (>100€) : ${bigWins}
-- Grosses pertes (>50€) : ${bigLosses}
-- Combinés joués : ${combiCount}
-- Paris simples : ${simpleCount}
-
-Fournis une analyse courte (max 200 mots) avec :
-1. Un diagnostic de son style de jeu
-2. Ses points forts
-3. Ses axes d'amélioration
-4. 2-3 recommandations concrètes
-
-Sois direct, constructif et encourage le jeu responsable.`
-          }
-        ]
-      })
-    });
-
-    const data = await response.json();
-    const analysisText = data.content
-      .map(item => item.type === "text" ? item.text : "")
-      .join("\n");
-
-    const embed = new EmbedBuilder()
-      .setColor('#00D9FF')
-      .setTitle('🤖 Analyse IA de votre Profil')
-      .setDescription(`**Joueur :** <@${targetUser.id}>\n\n${analysisText}`)
-      .addFields(
-        { name: '💰 Solde', value: `${user.balance}€`, inline: true },
-        { name: '📊 Winrate', value: `${winrate}%`, inline: true },
-        { name: '🎲 Paris', value: `${stats.totalBets}`, inline: true }
-      )
-      .setFooter({ text: '🤖 Analyse générée par Claude AI | Jouez responsable' })
-      .setTimestamp();
-
-    await loadingMsg.edit({ content: null, embeds: [embed] });
-    
-  } catch (error) {
-    console.error('❌ Erreur API Claude:', error);
-    await loadingMsg.edit('❌ Erreur lors de l\'analyse. Réessayez plus tard.');
-  }
-}
 
   if (command === '!stats' || command === '!statistiques') {
   const targetUser = message.mentions.users.first() || message.author;
@@ -1920,17 +1850,28 @@ Sois direct, constructif et encourage le jeu responsable.`
     }
   });
   
-  // === ANALYSE PAR TYPE DE PARI ===
-  const combiBets = allHistory.filter(h => h.betId && h.betId.startsWith('combi_'));
-  const simpleBets = allHistory.filter(h => !h.betId || !h.betId.startsWith('combi_'));
-  
-  const combiWinrate = combiBets.length > 0 
-    ? ((combiBets.filter(b => b.result === 'won').length / combiBets.length) * 100).toFixed(1)
-    : 0;
-  
-  const simpleWinrate = simpleBets.length > 0
-    ? ((simpleBets.filter(b => b.result === 'won').length / simpleBets.length) * 100).toFixed(1)
-    : 0;
+// === ANALYSE PAR TYPE DE PARI ===
+const combiBets = allHistory.filter(h => h.betId && h.betId.startsWith('combi_'));
+const sorBets = allHistory.filter(h => h.betId && h.betId.startsWith('sor_'));
+const simpleBets = allHistory.filter(h => {
+  // Exclure les combinés ET les Safe or Risk
+  const isCombi = h.betId && h.betId.startsWith('combi_');
+  const isSor = h.betId && h.betId.startsWith('sor_');
+  const isSorByQuestion = h.question && h.question.includes('Safe or Risk');
+  return !isCombi && !isSor && !isSorByQuestion;
+});
+
+const combiWinrate = combiBets.length > 0 
+  ? ((combiBets.filter(b => b.result === 'won').length / combiBets.length) * 100).toFixed(1)
+  : 0;
+
+const simpleWinrate = simpleBets.length > 0
+  ? ((simpleBets.filter(b => b.result === 'won').length / simpleBets.length) * 100).toFixed(1)
+  : 0;
+
+const sorWinrate = sorBets.length > 0
+  ? ((sorBets.filter(b => b.result === 'won').length / sorBets.length) * 100).toFixed(1)
+  : 0;
   
   // === ÉVOLUTION DU SOLDE (7 derniers jours) ===
   const sevenDaysAgo = new Date();
@@ -1982,6 +1923,7 @@ Sois direct, constructif et encourage le jeu responsable.`
       { name: '━━━━━ 🎰 TYPE DE PARIS ━━━━━', value: '\u200b', inline: false },
       { name: '📝 Paris simples', value: `${simpleBets.length} (WR: ${simpleWinrate}%)`, inline: true },
       { name: '🎰 Combinés', value: `${combiBets.length} (WR: ${combiWinrate}%)`, inline: true },
+      { name: '🎲 Safe or Risk', value: `${sorBets.length} (WR: ${sorWinrate}%)`, inline: true },
       { name: '🏆 Type favori', value: simpleWinrate > combiWinrate ? 'Paris simples' : 'Combinés', inline: true },
       
       { name: '━━━━━ ⏰ ANALYSE TEMPORELLE ━━━━━', value: '\u200b', inline: false },
