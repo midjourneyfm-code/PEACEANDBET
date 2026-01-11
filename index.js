@@ -295,17 +295,6 @@ async function closeBetAutomatically(messageId) {
 
 async function handleWinstreak(user, channelId, betDetails) {
   // betDetails = { question, option, amount, winnings, type: 'simple' ou 'combi' }
-  const betEntry = {
-  question: String(betDetails.question || 'N/A'),
-  option: String(betDetails.option || 'N/A'),
-  amount: Number(betDetails.amount || 0),
-  winnings: Number(betDetails.winnings || 0),
-  betType: String(betDetails.type || 'simple'),  // ⭐ RENOMMÉ
-  timestamp: new Date()
-};
-
-// Pousser dans le tableau bets de la streak
-currentStreakRecord.bets.push(betEntry);
   
   const oldStreak = user.currentStreak;
   user.currentStreak++;
@@ -313,25 +302,44 @@ currentStreakRecord.bets.push(betEntry);
   // Ajouter le pari à l'historique de streak actuelle
   if (!user.streakHistory) user.streakHistory = [];
   
-  // Trouver ou créer la streak en cours
-  let currentStreakRecord = user.streakHistory.find(s => s.streak === user.currentStreak && !s.endedAt);
-  if (!currentStreakRecord) {
+  // ⭐ CORRECTION : Initialiser à null AVANT la boucle
+  let currentStreakRecord = null;
+  
+  // Trouver la dernière streak non terminée
+  for (let i = user.streakHistory.length - 1; i >= 0; i--) {
+    if (!user.streakHistory[i].endedAt) {
+      currentStreakRecord = user.streakHistory[i];
+      break;
+    }
+  }
+  
+  // Si aucune streak en cours ou si la streak a changé, créer une nouvelle
+  if (!currentStreakRecord || currentStreakRecord.streak !== user.currentStreak) {
     currentStreakRecord = {
       streak: user.currentStreak,
-      bets: []
+      bets: [],
+      endedAt: null
     };
     user.streakHistory.push(currentStreakRecord);
   }
   
-  // Ajouter le pari à la streak
-  currentStreakRecord.bets.push({
-    question: betDetails.question,
-    option: betDetails.option,
-    amount: betDetails.amount,
-    winnings: betDetails.winnings,
-    type: betDetails.type,
+  // ⭐ S'assurer que bets est bien un tableau
+  if (!Array.isArray(currentStreakRecord.bets)) {
+    currentStreakRecord.bets = [];
+  }
+  
+  // Créer l'objet bet conforme au schéma
+  const betEntry = {
+    question: String(betDetails.question || 'N/A'),
+    option: String(betDetails.option || 'N/A'),
+    amount: Number(betDetails.amount || 0),
+    winnings: Number(betDetails.winnings || 0),
+    betType: String(betDetails.type || 'simple'),  // ⭐ UTILISER betType
     timestamp: new Date()
-  });
+  };
+  
+  // Pousser dans le tableau bets de la streak
+  currentStreakRecord.bets.push(betEntry);
   
   // Mettre à jour le record
   if (user.currentStreak > user.bestStreak) {
@@ -339,7 +347,6 @@ currentStreakRecord.bets.push(betEntry);
   }
   
   let bonusAmount = 0;
-  let announcement = '';
   
   // 🔥 BONUS À PARTIR DE 3 VICTOIRES CONSÉCUTIVES
   if (user.currentStreak >= 3) {
@@ -385,7 +392,6 @@ currentStreakRecord.bets.push(betEntry);
       console.error('Erreur annonce winstreak:', error);
     }
   } else if (user.currentStreak === 2) {
-    // Annonce qu'il est à 1 victoire du bonus
     try {
       const channel = await client.channels.fetch(channelId);
       await channel.send(
@@ -396,6 +402,9 @@ currentStreakRecord.bets.push(betEntry);
       console.error('Erreur annonce streak 2:', error);
     }
   }
+  
+  // ⭐ Marquer le document comme modifié explicitement
+  user.markModified('streakHistory');
   
   await user.save();
   return bonusAmount;
