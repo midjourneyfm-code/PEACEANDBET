@@ -5402,14 +5402,18 @@ await interaction.reply(distributionText);
 console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${totalDistributed}€ distribués`);
 }
 
-  if (action === 'pfc') {
-  const subaction = params[0];
-  const creatorId = params[1];
-  const opponentId = params[2];
-  const amount = params[3] ? parseInt(params[3]) : null;
-
+if (action === 'pfc') {
+  // ✅ PARSING INTERNE - Ne dépend pas du parsing global
+  const fullId = interaction.customId; // Exemple: "pfc_accept_123_456_100"
+  const parts = fullId.split('_');
+  const subaction = parts[1]; // "accept", "decline", ou "choice"
+  
   // ACCEPTATION/REFUS DU DÉFI
   if (subaction === 'accept' || subaction === 'decline') {
+    const creatorId = parts[2];
+    const opponentId = parts[3];
+    const amount = parts[4] ? parseInt(parts[4]) : null;
+    
     // Vérifier que c'est bien l'adversaire qui clique
     if (interaction.user.id !== opponentId) {
       return interaction.reply({ 
@@ -5518,8 +5522,9 @@ console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${tota
 
   // CHOIX DU JOUEUR
   if (subaction === 'choice') {
-    const gameCreatorId = params[1];
-    const choice = params[2]; // pierre, feuille, ou ciseaux
+    // Format: pfc_choice_creatorId_choix
+    const gameCreatorId = parts[2];
+    const choice = parts[3]; // pierre, feuille, ou ciseaux
 
     const game = activePFCGames.get(gameCreatorId);
     if (!game || game.status !== 'choosing') {
@@ -5598,8 +5603,8 @@ console.log(`✅ Validation terminée - ${simpleWinners.length} gagnants, ${tota
             `🔄 **Aucun gagnant !** Chaque joueur récupère sa mise de **${game.stake}€**.`
           )
           .addFields(
-            { name: '💳 Solde de ' + creator.userId, value: `${creator.balance}€`, inline: true },
-            { name: '💳 Solde de ' + opponent.userId, value: `${opponent.balance}€`, inline: true }
+            { name: '💳 Solde créateur', value: `${creator.balance}€`, inline: true },
+            { name: '💳 Solde adversaire', value: `${opponent.balance}€`, inline: true }
           )
           .setTimestamp();
 
