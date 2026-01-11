@@ -1518,7 +1518,7 @@ client.on('messageCreate', async (message) => {
   await loadingMsg.edit({ embeds: [resultEmbed] });
 }
 
-if (command === '!profil' || command === '!profile' || command === '!p') {
+if (command === '!profil' || command === '!profile' || command === '!pr') {
   const targetUser = message.mentions.users.first() || message.author;
   const user = await getUser(targetUser.id);
   const winrate = await calculateWinrate(targetUser.id);
@@ -1698,88 +1698,78 @@ if (command === '!graph' || command === '!graphique') {
   const totalChange = currentBalance - startBalance;
   const changePercent = ((totalChange / startBalance) * 100).toFixed(1);
   
-  // ⭐ NOUVEAU GRAPHIQUE PLUS LISIBLE ⭐
-  const graphHeight = 12;
-  const graphWidth = 50;
-  const range = maxBalance - minBalance || 1;
+  // ⭐ GRAPHIQUE SIMPLE AVEC BARRES ⭐
+  const sampleSize = Math.min(10, history.length);
+  const step = Math.floor(history.length / sampleSize);
+  const sampledData = [];
   
-  // Créer le graphique ligne par ligne
-  let graph = '';
-  
-  for (let y = graphHeight; y >= 0; y--) {
-    const threshold = minBalance + (range * y / graphHeight);
-    let line = '';
-    
-    // Afficher le label de prix sur la gauche
-    const label = Math.round(threshold).toString().padStart(6);
-    
-    // Construire la ligne du graphique
-    for (let x = 0; x < graphWidth; x++) {
-      const dataIndex = Math.floor((history.length - 1) * x / (graphWidth - 1));
-      const value = balances[dataIndex];
-      const prevValue = x > 0 ? balances[Math.floor((history.length - 1) * (x - 1) / (graphWidth - 1))] : value;
-      
-      // Déterminer le caractère à afficher
-      if (Math.abs(value - threshold) < range / (graphHeight * 2)) {
-        // Point sur la courbe
-        if (value > prevValue) {
-          line += '╱'; // Montée
-        } else if (value < prevValue) {
-          line += '╲'; // Descente
-        } else {
-          line += '━'; // Stable
-        }
-      } else if (value > threshold) {
-        // Au-dessus de la courbe
-        line += ' ';
-      } else {
-        // En dessous de la courbe
-        line += ' ';
-      }
+  for (let i = 0; i < history.length; i += step) {
+    if (sampledData.length < sampleSize) {
+      sampledData.push(history[i]);
     }
-    
-    // Ajouter la ligne avec le label
-    graph += `${label}€ │${line}│\n`;
   }
   
-  // Ajouter l'axe horizontal
-  graph += '       └' + '─'.repeat(graphWidth) + '┘\n';
+  // Toujours inclure le dernier point
+  if (sampledData[sampledData.length - 1] !== history[history.length - 1]) {
+    sampledData.push(history[history.length - 1]);
+  }
   
-  // Ajouter les dates en bas
-  const startDate = history[0].timestamp.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-  const endDate = history[history.length - 1].timestamp.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-  const spacing = ' '.repeat(Math.max(0, graphWidth - startDate.length - endDate.length - 2));
-  graph += `        ${startDate}${spacing}${endDate}`;
+  const barWidth = 20;
+  let graphText = '';
+  
+  for (let i = 0; i < sampledData.length; i++) {
+    const point = sampledData[i];
+    const balance = point.balance;
+    const normalized = maxBalance === minBalance ? 1 : (balance - minBalance) / (maxBalance - minBalance);
+    const bars = Math.round(normalized * barWidth);
+    
+    // Date formatée
+    const dateStr = point.timestamp.toLocaleDateString('fr-FR', { 
+      day: '2-digit', 
+      month: '2-digit' 
+    });
+    
+    // Barre avec couleur selon variation
+    let bar = '';
+    if (i > 0) {
+      const prevBalance = sampledData[i - 1].balance;
+      const symbol = balance > prevBalance ? '🟢' : balance < prevBalance ? '🔴' : '🟡';
+      bar = symbol + '█'.repeat(Math.max(1, bars));
+    } else {
+      bar = '🔵' + '█'.repeat(Math.max(1, bars));
+    }
+    
+    graphText += `${dateStr} ${bar} ${balance}€\n`;
+  }
   
   // Points de données marquants
   const wins = history.filter(h => h.reason && h.reason.includes('won')).length;
   const losses = history.filter(h => h.reason && h.reason.includes('lost')).length;
   
-  // ⭐ EMBED AMÉLIORÉ ⭐
+  // ⭐ EMBED SIMPLIFIÉ ⭐
   const embed = new EmbedBuilder()
     .setColor(totalChange >= 0 ? '#00FF00' : '#FF0000')
     .setTitle(`📈 Évolution du Solde - ${periodLabel}`)
     .setDescription(
       `**Joueur :** <@${targetUser.id}>\n\n` +
-      '```\n' + graph + '\n```'
+      '**📊 Graphique :**\n' +
+      '```\n' + graphText + '```\n' +
+      '🔵 Début | 🟢 Hausse | 🔴 Baisse | 🟡 Stable'
     )
     .addFields(
-      { name: '━━━━━ 💰 ÉTAT ACTUEL ━━━━━', value: '\u200b', inline: false },
-      { name: '💵 Solde actuel', value: `**${currentBalance}€**`, inline: true },
-      { name: '📊 Variation', value: `**${totalChange >= 0 ? '+' : ''}${totalChange}€**\n(${changePercent >= 0 ? '+' : ''}${changePercent}%)`, inline: true },
+      { name: '💰 Solde actuel', value: `**${currentBalance}€**`, inline: true },
+      { name: '📊 Variation totale', value: `**${totalChange >= 0 ? '+' : ''}${totalChange}€** (${changePercent >= 0 ? '+' : ''}${changePercent}%)`, inline: true },
       { name: '\u200b', value: '\u200b', inline: true },
       
-      { name: '━━━━━ 📊 EXTRÊMES ━━━━━', value: '\u200b', inline: false },
       { name: '📈 Maximum', value: `${maxBalance}€`, inline: true },
       { name: '📉 Minimum', value: `${minBalance}€`, inline: true },
       { name: '📏 Amplitude', value: `${maxBalance - minBalance}€`, inline: true },
       
-      { name: '━━━━━ 🎯 ACTIVITÉ ━━━━━', value: '\u200b', inline: false },
       { name: '✅ Paris gagnés', value: `${wins}`, inline: true },
       { name: '❌ Paris perdus', value: `${losses}`, inline: true },
-      { name: '📅 Points de données', value: `${history.length}`, inline: true }
+      { name: '📅 Points affichés', value: `${sampledData.length}/${history.length}`, inline: true }
     )
-    .setFooter({ text: '💡 Utilisez !graph [7d/30d/90d/all] pour changer la période' })
+    .setFooter({ text: '💡 !graph [7d/30d/90d/all] pour changer la période' })
     .setTimestamp();
   
   message.reply({ embeds: [embed] });
