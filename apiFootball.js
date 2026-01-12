@@ -135,6 +135,7 @@ async function getFixturesByDate(date) {
     for (const leagueId of leagues) {
       try {
         const response = await axios.get(`${BASE_URL}/fixtures?next=5`, {
+          headers: { 'x-apisports-key': API_KEY },
           params: {
             date: date,
             league: leagueId,
