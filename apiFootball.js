@@ -6,7 +6,7 @@ console.log('🔑 API KEY utilisée:', process.env.apiFootballKey);
 const axios = require('axios');
 const config = require('./config.json');
 
-const API_KEY = config.apiFootballKey;
+const API_KEY = env.apiFootballKey;
 const BASE_URL = 'https://v3.football.api-sports.io';
 
 // Cache pour éviter de gaspiller les requêtes
