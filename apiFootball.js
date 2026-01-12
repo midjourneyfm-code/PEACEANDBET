@@ -68,6 +68,26 @@ async function searchFixture(homeTeam, awayTeam, league, date = null) {
   }
 }
 
+async function getFixturesByTeam(teamName) {
+  try {
+    const response = await axios.get(`${BASE_URL}/fixtures`, {
+      headers: {
+        'x-apisports-key': API_KEY,
+        'User-Agent': 'Mozilla/5.0'
+      },
+      params: {
+        team: teamName,
+        next: 3
+      }
+    });
+
+    return response.data.response;
+  } catch (error) {
+    console.error('❌ Erreur getFixturesByTeam:', error.response?.status, error.message);
+    throw error;
+  }
+}
+
 /**
  * Obtenir les statistiques H2H entre deux équipes
  */
@@ -338,6 +358,7 @@ module.exports = {
   getLiveMatchStats,
   getMatchEvents,
   getHomeAwayStats,
+  getFixturesByTeam,
   formatForm,
   analyzeTrends,
   getLeagueId
