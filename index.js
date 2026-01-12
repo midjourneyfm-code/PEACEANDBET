@@ -3,6 +3,7 @@ const config = require('./config.json');
 const express = require('express');
 const mongoose = require('mongoose');
 const https = require('https');
+const apiFootball = require('./apiFootball');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -77,6 +78,17 @@ const betSchema = new mongoose.Schema({
   reminderSent: { type: Boolean, default: false },
   isBoosted: { type: Boolean, default: false },
   winningOptions: [Number]
+   // ⭐ AJOUT ICI
+  matchData: {
+    fixtureId: String,
+    homeTeamId: Number,
+    awayTeamId: Number,
+    homeTeamName: String,
+    awayTeamName: String,
+    leagueId: Number,
+    date: Date,
+    venue: String
+  }
 });
 
 const dailySpinSchema = new mongoose.Schema({
@@ -2020,6 +2032,8 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [embed] });
   }
 
+  
+
   if (command === '!classement' || command === '!leaderboard' || command === '!top') {
     const sortBy = args[1] || 'solde';
     const users = await User.find({
@@ -2059,7 +2073,7 @@ client.on('messageCreate', async (message) => {
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
       description += `${medal} <@${user.userId}> — ${user.balance}€ (${user.winrate}% winrate, ${user.stats.totalBets} paris)\n`;
     }
-
+    
     const embed = new EmbedBuilder()
       .setColor('#FFD700')
       .setTitle(`🏆 Classement des Parieurs`)
@@ -2087,6 +2101,154 @@ client.on('messageCreate', async (message) => {
 
     message.reply({ embeds: [embed], components: [row] });
   }
+
+  if (message.content.startsWith('!analyse')) {
+  const args = message.content.slice(9).trim();
+  
+  if (!args) {
+    return message.reply('❌ Usage : `!analyse [ID du pari]` ou `!analyse [nom du match]`');
+  }
+
+  try {
+    let bet;
+
+    // Recherche par ID de pari
+    if (args.startsWith('pari_') || args.length === 18) {
+      bet = await Bet.findOne({ 
+        $or: [
+          { messageId: args },
+          { 'matchData.fixtureId': args }
+        ]
+      });
+    } else {
+      // Recherche par nom de match
+      bet = await Bet.findOne({
+        question: new RegExp(args, 'i'),
+        status: { $ne: 'resolved' }
+      });
+    }
+
+    if (!bet || !bet.matchData) {
+      return message.reply('❌ Pari introuvable ou match non lié à un match API-Football.');
+    }
+
+    // Récupérer les données du match
+    const matchData = bet.matchData;
+    const homeId = matchData.homeTeamId;
+    const awayId = matchData.awayTeamId;
+    const leagueId = matchData.leagueId;
+    const season = new Date(matchData.date).getFullYear();
+
+    message.channel.send('🔍 **Analyse en cours...** Récupération des données...');
+
+    // Récupérer toutes les données en parallèle
+    const [h2h, homeForm, awayForm, homeStanding, awayStanding, homeStats, awayStats] = await Promise.all([
+      apiFootball.getH2H(homeId, awayId),
+      apiFootball.getTeamForm(homeId, 5),
+      apiFootball.getTeamForm(awayId, 5),
+      apiFootball.getTeamStanding(homeId, leagueId, season),
+      apiFootball.getTeamStanding(awayId, leagueId, season),
+      apiFootball.getHomeAwayStats(homeId, leagueId, season),
+      apiFootball.getHomeAwayStats(awayId, leagueId, season)
+    ]);
+
+    // Construire l'embed d'analyse
+    const analysisEmbed = new EmbedBuilder()
+      .setColor('#1E90FF')
+      .setTitle('📊 ANALYSE DU MATCH')
+      .setDescription(
+        `🏟️ **${matchData.homeTeamName} 🆚 ${matchData.awayTeamName}**\n` +
+        `📅 ${new Date(matchData.date).toLocaleDateString('fr-FR', { 
+          weekday: 'long', 
+          day: 'numeric', 
+          month: 'long', 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        })}\n` +
+        `🏆 ${bet.question.split('|')[1]?.trim() || 'Championnat'}\n` +
+        `═══════════════════════════════════`
+      );
+
+    // Classement
+    if (homeStanding && awayStanding) {
+      analysisEmbed.addFields({
+        name: '📍 CLASSEMENT',
+        value: 
+          `🔵 ${matchData.homeTeamName} : **${homeStanding.rank}ème** (${homeStanding.points} pts)\n` +
+          `⚪ ${matchData.awayTeamName} : **${awayStanding.rank}ème** (${awayStanding.points} pts)`,
+        inline: false
+      });
+    }
+
+    // Forme récente
+    const homeFormStr = apiFootball.formatForm(homeForm, homeId);
+    const awayFormStr = apiFootball.formatForm(awayForm, awayId);
+    
+    analysisEmbed.addFields({
+      name: '🔥 FORME RÉCENTE (5 derniers)',
+      value: 
+        `🔵 ${matchData.homeTeamName} : ${homeFormStr}\n` +
+        `⚪ ${matchData.awayTeamName} : ${awayFormStr}`,
+      inline: false
+    });
+
+    // Head to Head
+    if (h2h.length > 0) {
+      const h2hStr = h2h.slice(0, 5).map(f => {
+        const date = new Date(f.fixture.date).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' });
+        return `${f.teams.home.name} ${f.goals.home}-${f.goals.away} ${f.teams.away.name} (${date})`;
+      }).join('\n');
+
+      analysisEmbed.addFields({
+        name: '📊 FACE-À-FACE (5 derniers)',
+        value: h2hStr || 'Aucune confrontation récente',
+        inline: false
+      });
+    }
+
+    // Stats domicile/extérieur
+    if (homeStats && awayStats) {
+      const homeHome = homeStats.fixtures.wins.home;
+      const homeDrawHome = homeStats.fixtures.draws.home;
+      const homeLoseHome = homeStats.fixtures.loses.home;
+      const homeGoalsHome = homeStats.goals.for.total.home;
+
+      const awayWinsAway = awayStats.fixtures.wins.away;
+      const awayDrawAway = awayStats.fixtures.draws.away;
+      const awayLoseAway = awayStats.fixtures.loses.away;
+      const awayGoalsAway = awayStats.goals.for.total.away;
+
+      analysisEmbed.addFields({
+        name: '🏠 DOMICILE / EXTÉRIEUR',
+        value: 
+          `🔵 ${matchData.homeTeamName} à domicile : ${homeHome}V-${homeDrawHome}N-${homeLoseHome}D (${homeGoalsHome} buts)\n` +
+          `⚪ ${matchData.awayTeamName} à l'extérieur : ${awayWinsAway}V-${awayDrawAway}N-${awayLoseAway}D (${awayGoalsAway} buts)`,
+        inline: false
+      });
+    }
+
+    // Tendances
+    const trends = apiFootball.analyzeTrends(h2h, homeStats, awayStats);
+    analysisEmbed.addFields({
+      name: '💡 TENDANCES',
+      value: trends.join('\n'),
+      inline: false
+    });
+
+    // Footer avec info pari
+    analysisEmbed.setFooter({ 
+      text: `🆔 Pari : ${bet.messageId} | 💰 Cagnotte : ${bet.totalPool}€ | API-Football` 
+    });
+    analysisEmbed.setTimestamp();
+
+    await message.channel.send({ embeds: [analysisEmbed] });
+    console.log(`📊 Analyse envoyée pour ${matchData.homeTeamName} vs ${matchData.awayTeamName}`);
+
+  } catch (error) {
+    console.error('❌ Erreur commande !analyse:', error);
+    message.reply('❌ Erreur lors de l\'analyse. Vérifiez que le pari existe et est lié à un match.');
+  }
+}
 
   if (command === '!roulette' || command === '!spin' || command === '!roue') {
   // Vérifier si l'utilisateur peut tourner aujourd'hui
