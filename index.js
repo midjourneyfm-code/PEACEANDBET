@@ -4275,6 +4275,47 @@ if (command === '!creer-pari' || command === '!createbet') {
 
   message.reply(replyText);
 }
+
+if (message.content.startsWith('!equipe')) {
+  const teamName = message.content.slice(8).trim();
+
+  if (!teamName) {
+    return message.reply('❌ Usage : `!equipe [nom de l’équipe]`');
+  }
+
+  try {
+    message.channel.send('🔍 Recherche en cours…');
+
+    const fixtures = await apiFootball.getFixturesByTeam(teamName);
+
+    if (!fixtures || fixtures.length === 0) {
+      return message.reply('❌ Aucun match trouvé.');
+    }
+
+    const lines = fixtures.map(f => {
+      const date = new Date(f.fixture.date).toLocaleString('fr-FR');
+      return `• **${f.teams.home.name} vs ${f.teams.away.name}**\n📅 ${date} | 🏆 ${f.league.name}`;
+    });
+
+    const embed = new EmbedBuilder()
+      .setColor('#1E90FF')
+      .setTitle(`⚽ Prochains matchs – ${teamName}`)
+      .setDescription(lines.join('\n\n'))
+      .setFooter({ text: 'API-Football (test faible charge)' })
+      .setTimestamp();
+
+    message.reply({ embeds: [embed] });
+
+  } catch (error) {
+    console.error('❌ Commande !equipe:', error.response?.status);
+
+    message.reply(
+      `❌ Erreur API (${error.response?.status || 'inconnue'}).\n` +
+      `👉 Test faible charge`
+    );
+  }
+}
+  
   if (command === '!matchs-du-jour' || command === '!mdj' || command === '!today') {
   try {
     message.channel.send('🔍 **Recherche des matchs du jour...**');
