@@ -4275,7 +4275,8 @@ if (command === '!creer-pari' || command === '!createbet') {
 
   message.reply(replyText);
 }
-  if (command === '!matchs-du-jour' || command === '!mdj' || command === '!today') {
+  
+if (command === '!matchs-du-jour' || command === '!mdj' || command === '!today') {
   try {
     message.channel.send('🔍 **Recherche des matchs du jour...**');
     
@@ -4283,7 +4284,7 @@ if (command === '!creer-pari' || command === '!createbet') {
     const fixtures = await apiFootball.getFixturesByDate(today);
     
     if (!fixtures || fixtures.length === 0) {
-      return message.reply('📭 Aucun match prévu aujourd\'hui dans les ligues principales.');
+      return message.reply('🔭 Aucun match prévu aujourd\'hui dans les ligues principales.');
     }
     
     // Grouper par ligue
@@ -4323,92 +4324,14 @@ if (command === '!creer-pari' || command === '!createbet') {
       });
     }
     
-    embed.setFooter({ text: '💡 Utilisez !creer-pari [fixtureId] | heure pour créer un pari' });
+    embed.setFooter({ text: '💡 Utilisez !creer-pari [question] | [opt1:cote1] | [opt2:cote2] | [heure] | [fixtureId] pour créer un pari' });
     
     message.reply({ embeds: [embed] });
     
   } catch (error) {
     console.error('❌ Erreur !matchs-du-jour:', error);
-    message.reply('❌ Erreur lors de la récupération des matchs du jour.');
-  }
-}
-
-// 🔎 RECHERCHER UN MATCH PAR ÉQUIPE
-if (command === '!matchs' || command === '!search-match') {
-  const teamQuery = args.slice(1).join(' ');
-  
-  if (!teamQuery) {
-    return message.reply(
-      '❌ **Format incorrect !**\n\n' +
-      '📋 **Usage :** `!matchs [nom équipe]`\n' +
-      '📌 **Exemple :** `!matchs PSG`\n\n' +
-      '💡 **Astuce :** Utilisez `!matchs-du-jour` pour voir tous les matchs d\'aujourd\'hui'
-    );
-  }
-  
-  try {
-    message.channel.send(`🔍 **Recherche de matchs pour "${teamQuery}"...**`);
-    
-    // Rechercher l'équipe
-    const teams = await apiFootball.searchTeam(teamQuery);
-    
-    if (!teams || teams.length === 0) {
-      return message.reply(`❌ Aucune équipe trouvée pour "${teamQuery}".`);
-    }
-    
-    const team = teams[0];
-    const teamId = team.team.id;
-    const teamName = team.team.name;
-    
-    // Récupérer les prochains matchs
-    const fixtures = await apiFootball.getTeamUpcomingFixtures(teamId, 5);
-    
-    if (!fixtures || fixtures.length === 0) {
-      return message.reply(`📭 Aucun match à venir pour **${teamName}**.`);
-    }
-    
-    // Créer l'embed
-    const embed = new EmbedBuilder()
-      .setColor('#1E90FF')
-      .setTitle(`⚽ Prochains Matchs - ${teamName}`)
-      .setThumbnail(team.team.logo)
-      .setDescription(`📅 Les ${fixtures.length} prochains matchs de **${teamName}** :\n`)
-      .setTimestamp();
-    
-    for (const fixture of fixtures) {
-      const date = new Date(fixture.fixture.date);
-      const dateStr = date.toLocaleDateString('fr-FR', { 
-        weekday: 'short', 
-        day: 'numeric', 
-        month: 'short' 
-      });
-      const timeStr = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-      
-      const isHome = fixture.teams.home.id === teamId;
-      const opponent = isHome ? fixture.teams.away.name : fixture.teams.home.name;
-      const location = isHome ? '🏠 Domicile' : '✈️ Extérieur';
-      
-      embed.addFields({
-        name: `${fixture.teams.home.name} 🆚 ${fixture.teams.away.name}`,
-        value: 
-          `🆔 **ID :** \`${fixture.fixture.id}\`\n` +
-          `📅 **Date :** ${dateStr} à ${timeStr}\n` +
-          `🏆 **Compétition :** ${fixture.league.name}\n` +
-          `📍 **Lieu :** ${location}\n` +
-          `🏟️ **Stade :** ${fixture.fixture.venue.name}`,
-        inline: false
-      });
-    }
-    
-    embed.setFooter({ 
-      text: '💡 Utilisez !creer-pari [fixtureId] | heure pour créer un pari' 
-    });
-    
-    message.reply({ embeds: [embed] });
-    
-  } catch (error) {
-    console.error('❌ Erreur !matchs:', error);
-    message.reply('❌ Erreur lors de la recherche de matchs.');
+    console.error('Stack:', error.stack); // ✅ Afficher la stack complète
+    message.reply(`❌ Erreur lors de la récupération des matchs du jour.\n\`\`\`${error.message}\`\`\``);
   }
 }
 
