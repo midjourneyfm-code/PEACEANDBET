@@ -134,10 +134,9 @@ async function getFixturesByDate(date) {
     // Récupérer les matchs pour chaque ligue
     for (const leagueId of leagues) {
       try {
-        const response = await axios.get(`${BASE_URL}/fixtures`, {
+        const response = await axios.get(`${BASE_URL}/fixtures?next=5`, {
           headers: { 'x-apisports-key': API_KEY },
           params: {
-            date: date,
             league: leagueId,
             season: 2025
           }
