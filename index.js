@@ -1,6 +1,5 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const config = require('./config.json');
-const apiFootball = require('./apiFootball');
 const express = require('express');
 const mongoose = require('mongoose');
 const https = require('https');
@@ -77,18 +76,7 @@ const betSchema = new mongoose.Schema({
   closingTime: Date,
   reminderSent: { type: Boolean, default: false },
   isBoosted: { type: Boolean, default: false },
-  winningOptions: [Number],
-   // ⭐ AJOUT ICI
-  matchData: {
-    fixtureId: String,
-    homeTeamId: Number,
-    awayTeamId: Number,
-    homeTeamName: String,
-    awayTeamName: String,
-    leagueId: Number,
-    date: Date,
-    venue: String
-  }
+  winningOptions: [Number]
 });
 
 const dailySpinSchema = new mongoose.Schema({
@@ -2032,8 +2020,6 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [embed] });
   }
 
-  
-
   if (command === '!classement' || command === '!leaderboard' || command === '!top') {
     const sortBy = args[1] || 'solde';
     const users = await User.find({
@@ -2073,7 +2059,7 @@ client.on('messageCreate', async (message) => {
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
       description += `${medal} <@${user.userId}> — ${user.balance}€ (${user.winrate}% winrate, ${user.stats.totalBets} paris)\n`;
     }
-    
+
     const embed = new EmbedBuilder()
       .setColor('#FFD700')
       .setTitle(`🏆 Classement des Parieurs`)
@@ -2101,154 +2087,6 @@ client.on('messageCreate', async (message) => {
 
     message.reply({ embeds: [embed], components: [row] });
   }
-
-  if (message.content.startsWith('!analyse')) {
-  const args = message.content.slice(9).trim();
-  
-  if (!args) {
-    return message.reply('❌ Usage : `!analyse [ID du pari]` ou `!analyse [nom du match]`');
-  }
-
-  try {
-    let bet;
-
-    // Recherche par ID de pari
-    if (args.startsWith('pari_') || args.length === 18) {
-      bet = await Bet.findOne({ 
-        $or: [
-          { messageId: args },
-          { 'matchData.fixtureId': args }
-        ]
-      });
-    } else {
-      // Recherche par nom de match
-      bet = await Bet.findOne({
-        question: new RegExp(args, 'i'),
-        status: { $ne: 'resolved' }
-      });
-    }
-
-    if (!bet || !bet.matchData) {
-      return message.reply('❌ Pari introuvable ou match non lié à un match API-Football.');
-    }
-
-    // Récupérer les données du match
-    const matchData = bet.matchData;
-    const homeId = matchData.homeTeamId;
-    const awayId = matchData.awayTeamId;
-    const leagueId = matchData.leagueId;
-    const season = new Date(matchData.date).getFullYear();
-
-    message.channel.send('🔍 **Analyse en cours...** Récupération des données...');
-
-    // Récupérer toutes les données en parallèle
-    const [h2h, homeForm, awayForm, homeStanding, awayStanding, homeStats, awayStats] = await Promise.all([
-      apiFootball.getH2H(homeId, awayId),
-      apiFootball.getTeamForm(homeId, 5),
-      apiFootball.getTeamForm(awayId, 5),
-      apiFootball.getTeamStanding(homeId, leagueId, season),
-      apiFootball.getTeamStanding(awayId, leagueId, season),
-      apiFootball.getHomeAwayStats(homeId, leagueId, season),
-      apiFootball.getHomeAwayStats(awayId, leagueId, season)
-    ]);
-
-    // Construire l'embed d'analyse
-    const analysisEmbed = new EmbedBuilder()
-      .setColor('#1E90FF')
-      .setTitle('📊 ANALYSE DU MATCH')
-      .setDescription(
-        `🏟️ **${matchData.homeTeamName} 🆚 ${matchData.awayTeamName}**\n` +
-        `📅 ${new Date(matchData.date).toLocaleDateString('fr-FR', { 
-          weekday: 'long', 
-          day: 'numeric', 
-          month: 'long', 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        })}\n` +
-        `🏆 ${bet.question.split('|')[1]?.trim() || 'Championnat'}\n` +
-        `═══════════════════════════════════`
-      );
-
-    // Classement
-    if (homeStanding && awayStanding) {
-      analysisEmbed.addFields({
-        name: '📍 CLASSEMENT',
-        value: 
-          `🔵 ${matchData.homeTeamName} : **${homeStanding.rank}ème** (${homeStanding.points} pts)\n` +
-          `⚪ ${matchData.awayTeamName} : **${awayStanding.rank}ème** (${awayStanding.points} pts)`,
-        inline: false
-      });
-    }
-
-    // Forme récente
-    const homeFormStr = apiFootball.formatForm(homeForm, homeId);
-    const awayFormStr = apiFootball.formatForm(awayForm, awayId);
-    
-    analysisEmbed.addFields({
-      name: '🔥 FORME RÉCENTE (5 derniers)',
-      value: 
-        `🔵 ${matchData.homeTeamName} : ${homeFormStr}\n` +
-        `⚪ ${matchData.awayTeamName} : ${awayFormStr}`,
-      inline: false
-    });
-
-    // Head to Head
-    if (h2h.length > 0) {
-      const h2hStr = h2h.slice(0, 5).map(f => {
-        const date = new Date(f.fixture.date).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' });
-        return `${f.teams.home.name} ${f.goals.home}-${f.goals.away} ${f.teams.away.name} (${date})`;
-      }).join('\n');
-
-      analysisEmbed.addFields({
-        name: '📊 FACE-À-FACE (5 derniers)',
-        value: h2hStr || 'Aucune confrontation récente',
-        inline: false
-      });
-    }
-
-    // Stats domicile/extérieur
-    if (homeStats && awayStats) {
-      const homeHome = homeStats.fixtures.wins.home;
-      const homeDrawHome = homeStats.fixtures.draws.home;
-      const homeLoseHome = homeStats.fixtures.loses.home;
-      const homeGoalsHome = homeStats.goals.for.total.home;
-
-      const awayWinsAway = awayStats.fixtures.wins.away;
-      const awayDrawAway = awayStats.fixtures.draws.away;
-      const awayLoseAway = awayStats.fixtures.loses.away;
-      const awayGoalsAway = awayStats.goals.for.total.away;
-
-      analysisEmbed.addFields({
-        name: '🏠 DOMICILE / EXTÉRIEUR',
-        value: 
-          `🔵 ${matchData.homeTeamName} à domicile : ${homeHome}V-${homeDrawHome}N-${homeLoseHome}D (${homeGoalsHome} buts)\n` +
-          `⚪ ${matchData.awayTeamName} à l'extérieur : ${awayWinsAway}V-${awayDrawAway}N-${awayLoseAway}D (${awayGoalsAway} buts)`,
-        inline: false
-      });
-    }
-
-    // Tendances
-    const trends = apiFootball.analyzeTrends(h2h, homeStats, awayStats);
-    analysisEmbed.addFields({
-      name: '💡 TENDANCES',
-      value: trends.join('\n'),
-      inline: false
-    });
-
-    // Footer avec info pari
-    analysisEmbed.setFooter({ 
-      text: `🆔 Pari : ${bet.messageId} | 💰 Cagnotte : ${bet.totalPool}€ | API-Football` 
-    });
-    analysisEmbed.setTimestamp();
-
-    await message.channel.send({ embeds: [analysisEmbed] });
-    console.log(`📊 Analyse envoyée pour ${matchData.homeTeamName} vs ${matchData.awayTeamName}`);
-
-  } catch (error) {
-    console.error('❌ Erreur commande !analyse:', error);
-    message.reply('❌ Erreur lors de l\'analyse. Vérifiez que le pari existe et est lié à un match.');
-  }
-}
 
   if (command === '!roulette' || command === '!spin' || command === '!roue') {
   // Vérifier si l'utilisateur peut tourner aujourd'hui
@@ -3774,684 +3612,232 @@ if (command === '!annuler-tout' || command === '!cancelall') {
   message.reply({ embeds: [embed] });
 }
 
-if (command === '!creer-pari' || command === '!createbet') {
-  const member = await message.guild.members.fetch(message.author.id);
-  const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
+  if (command === '!creer-pari' || command === '!createbet') {
+    const member = await message.guild.members.fetch(message.author.id);
+    const hasRole = member.roles.cache.some(role => role.name === BETTING_CREATOR_ROLE);
 
-  if (!hasRole) {
-    return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris.`);
-  }
+    if (!hasRole) {
+      return message.reply(`❌ Vous devez avoir le rôle **"${BETTING_CREATOR_ROLE}"** pour créer des paris.`);
+    }
 
-  const content = message.content.slice(command.length).trim();
-  
-  // 🆕 NOUVEAU FORMAT AVEC API
-  // !creer-pari [fixtureId] | heure
-  // OU
-  // !creer-pari Question ? | Option 1:cote1 | Option 2:cote2 | heure (ancien format)
-  
-  if (!content.includes('|')) {
-    return message.reply(
-      '❌ **Format incorrect !**\n\n' +
-      '**📋 NOUVEAU : Pari automatique avec API Football**\n' +
-      '`!creer-pari [fixtureId] | heure`\n' +
-      '📌 Exemple : `!creer-pari 1035998 | 21h30`\n\n' +
-      '**📋 Ou format manuel classique**\n' +
-      '`!creer-pari Question ? | Option 1:cote1 | Option 2:cote2 | heure`\n' +
-      '📌 Exemple : `!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | 21h30`\n\n' +
-      '💡 Avec l\'API, les cotes sont calculées automatiquement !\n' +
-      '🔍 Pour trouver un fixtureId, utilisez `!matchs [équipe]` ou `!matchs-jour [date]`'
-    );
-  }
-
-  const parts = content.split('|').map(p => p.trim());
-  
-  // 🔍 DÉTECTION : API ou Manuel ?
-  const firstPart = parts[0].trim();
-  const isApiMode = /^\d+$/.test(firstPart); // Si c'est juste un nombre = fixtureId
-  
-  // ==================== MODE API ====================
-  if (isApiMode) {
-    const fixtureId = firstPart;
-    const closingTimeStr = parts[1] || null;
+    const content = message.content.slice(command.length).trim();
     
-    try {
-      message.channel.send('🔍 **Récupération des données du match...**');
+    if (!content.includes('|')) {
+      return message.reply('❌ Format incorrect. Utilisez : `!creer-pari Question ? | Option 1:cote1 | Option 2:cote2 | heure`\n\nExemple: `!creer-pari Qui gagne ? | PSG:1.5 | OM:3 | 21h30`\nHeure optionnelle (format 24h)');
+    }
+
+    const parts = content.split('|').map(p => p.trim());
+    const question = parts[0];
+    
+    let closingTimeStr = null;
+    let optionsRaw = parts.slice(1);
+    
+    const lastPart = parts[parts.length - 1];
+    if (/^\d{1,2}h\d{0,2}$/i.test(lastPart.trim())) {
+      closingTimeStr = lastPart;
+      optionsRaw = parts.slice(1, -1);
+    }
+
+    if (optionsRaw.length < 2 || optionsRaw.length > 10) {
+      return message.reply('❌ Vous devez avoir entre 2 et 10 options.');
+    }
+
+    const options = [];
+    const odds = [];
+
+    for (const opt of optionsRaw) {
+      if (!opt.includes(':')) {
+        return message.reply('❌ Chaque option doit avoir une cote. Format: `Option:cote`\n\nExemple: `PSG:1.5`');
+      }
+
+      const [name, oddsStr] = opt.split(':').map(s => s.trim());
+      const oddsValue = parseFloat(oddsStr);
+
+      if (isNaN(oddsValue) || oddsValue < 1.01) {
+        return message.reply(`❌ La cote pour "${name}" est invalide. Elle doit être >= 1.01`);
+      }
+
+      options.push({ name, odds: oddsValue });
+      odds.push(oddsValue);
+    }
+
+    // CORRECTION: Fuseau horaire français
+    let closingTime = null;
+    let closingTimestamp = null;
+    
+         if (closingTimeStr) {
+  const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
+  const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
+  
+  if (hoursMatch) {
+    const targetHour = parseInt(hoursMatch[1]);
+    const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+    
+    if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
+      // ⭐ SOLUTION SIMPLE : Date locale directe
+      const closingDate = new Date();
+      closingDate.setHours(targetHour, targetMinute, 0, 0);
       
-      // Récupérer les infos du match
-      const fixture = await apiFootball.getFixture(fixtureId);
-      
-      if (!fixture) {
-        return message.reply('❌ Match introuvable. Vérifiez le fixtureId.');
+      // Si l'heure est déjà passée aujourd'hui, passer à demain
+      if (closingDate.getTime() <= Date.now()) {
+        closingDate.setDate(closingDate.getDate() + 1);
       }
       
-      const homeTeam = fixture.teams.home.name;
-      const awayTeam = fixture.teams.away.name;
-      const league = fixture.league.name;
-      const matchDate = new Date(fixture.fixture.date);
-      const venue = fixture.fixture.venue.name;
+      closingTimestamp = closingDate.getTime();
+      closingTime = closingDate;
       
-      // Récupérer les cotes pour ce match
-      const odds = await apiFootball.getFixtureOdds(fixtureId);
-      
-      if (!odds || odds.length === 0) {
-        return message.reply(
-          '⚠️ **Aucune cote disponible pour ce match.**\n\n' +
-          `🏟️ ${homeTeam} vs ${awayTeam}\n` +
-          `📅 ${matchDate.toLocaleString('fr-FR')}\n\n` +
-          'Vous pouvez créer un pari manuel avec `!creer-pari`'
-        );
-      }
-      
-      // 🎯 Extraire les cotes 1X2 (victoire domicile, nul, victoire extérieur)
-      const homeWinOdds = parseFloat(odds[0]?.values?.find(v => v.value === 'Home')?.odd || 2.0);
-      const drawOdds = parseFloat(odds[0]?.values?.find(v => v.value === 'Draw')?.odd || 3.0);
-      const awayWinOdds = parseFloat(odds[0]?.values?.find(v => v.value === 'Away')?.odd || 2.5);
-      
-      // Construire la question et les options
-      const question = `${homeTeam} vs ${awayTeam} | ${league}`;
-      const options = [
-        { name: `Victoire ${homeTeam}`, odds: homeWinOdds },
-        { name: 'Match Nul', odds: drawOdds },
-        { name: `Victoire ${awayTeam}`, odds: awayWinOdds }
-      ];
-      const initialOdds = [homeWinOdds, drawOdds, awayWinOdds];
-      
-      // 🕐 Gérer l'heure de clôture
-      let closingTime = null;
-      let closingTimestamp = null;
-      
-      if (closingTimeStr) {
-        const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
-        const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
-        
-        if (hoursMatch) {
-          const targetHour = parseInt(hoursMatch[1]);
-          const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
-          
-          if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-            const closingDate = new Date();
-            closingDate.setHours(targetHour, targetMinute, 0, 0);
-            
-            if (closingDate.getTime() <= Date.now()) {
-              closingDate.setDate(closingDate.getDate() + 1);
-            }
-            
-            closingTimestamp = closingDate.getTime();
-            closingTime = closingDate;
-          }
-        }
-      } else {
-        // Par défaut : clôture 5 minutes avant le match
-        closingTime = new Date(matchDate.getTime() - 5 * 60 * 1000);
-        closingTimestamp = closingTime.getTime();
-      }
-      
-      // 📊 Créer l'embed du pari
-      const optionsText = options.map((opt, i) => 
-        `**${i + 1}.** ${opt.name} — Cote: **${opt.odds}x**`
-      ).join('\n');
-      
-      const embed = new EmbedBuilder()
-        .setColor('#FFD700')
-        .setTitle('📊 Nouveau Pari (API Football)')
-        .setDescription(
-          `**${question}**\n\n` +
-          `🏟️ **Lieu :** ${venue}\n` +
-          `📅 **Date du match :** ${matchDate.toLocaleString('fr-FR', {
-            weekday: 'long',
-            day: 'numeric',
-            month: 'long',
-            hour: '2-digit',
-            minute: '2-digit'
-          })}\n\n` +
-          `${optionsText}`
-        )
-        .addFields(
-          { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
-          { name: '📈 Statut', value: '🟢 En cours', inline: true },
-          { name: '💵 Total des mises', value: '0€', inline: true },
-          { name: '👥 Parieurs', value: '0', inline: true }
-        )
-        .setFooter({ text: `🔍 Analysez ce match avec !analyse ${fixtureId} | Créé par ${message.author.tag}` })
-        .setTimestamp();
-      
-      if (closingTime) {
-        const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
-          timeZone: 'Europe/Paris',
-          hour: '2-digit', 
-          minute: '2-digit',
-          hour12: false
-        });
-        embed.addFields({
-          name: '⏰ Clôture des paris',
-          value: `${parisTimeStr} (<t:${Math.floor(closingTimestamp / 1000)}:R>)`,
-          inline: false
-        });
-      }
-      
-      // Créer les boutons
-      const rows = [];
-      for (let i = 0; i < options.length; i += 5) {
-        const row = new ActionRowBuilder();
-        const chunk = options.slice(i, i + 5);
-        
-        chunk.forEach((opt, index) => {
-          row.addComponents(
-            new ButtonBuilder()
-              .setCustomId(`bet_PLACEHOLDER_${i + index}`)
-              .setLabel(`${opt.name} (${opt.odds}x)`)
-              .setStyle(ButtonStyle.Primary)
-              .setEmoji('💰')
-          );
-        });
-        
-        rows.push(row);
-      }
-      
-      const adminRow = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(`cancel_PLACEHOLDER`)
-            .setLabel('Annuler le pari')
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji('❌')
-        );
-      
-      rows.push(adminRow);
-      
-      const betMessage = await message.channel.send({ embeds: [embed], components: rows });
-      
-      // Mettre à jour avec les bons IDs
-      const finalRows = [];
-      for (let i = 0; i < options.length; i += 5) {
-        const row = new ActionRowBuilder();
-        const chunk = options.slice(i, i + 5);
-        
-        chunk.forEach((opt, index) => {
-          row.addComponents(
-            new ButtonBuilder()
-              .setCustomId(`bet_${betMessage.id}_${i + index}`)
-              .setLabel(`${opt.name} (${opt.odds}x)`)
-              .setStyle(ButtonStyle.Primary)
-              .setEmoji('💰')
-          );
-        });
-        
-        finalRows.push(row);
-      }
-      
-      const finalAdminRow = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(`cancel_${betMessage.id}`)
-            .setLabel('Annuler le pari')
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji('❌')
-        );
-      
-      finalRows.push(finalAdminRow);
-      
-      await betMessage.edit({ embeds: [embed], components: finalRows });
-      
-      // 🗃️ Enregistrer dans la DB avec les données API
-      const newBet = new Bet({
-        messageId: betMessage.id,
-        question,
-        options,
-        initialOdds,
-        bettors: {},
-        creator: message.author.id,
-        channelId: message.channel.id,
-        totalPool: 0,
-        status: 'open',
-        createdAt: new Date(),
-        closingTime: closingTime,
-        reminderSent: false,
-        // 🆕 DONNÉES API FOOTBALL
-        matchData: {
-          fixtureId: fixtureId,
-          homeTeamId: fixture.teams.home.id,
-          awayTeamId: fixture.teams.away.id,
-          homeTeamName: homeTeam,
-          awayTeamName: awayTeam,
-          leagueId: fixture.league.id,
-          date: matchDate,
-          venue: venue
-        }
+      console.log(`🕐 Heure demandée : ${targetHour}h${targetMinute.toString().padStart(2, '0')}`);
+      console.log(`📅 Clôture prévue : ${closingDate.toLocaleString('fr-FR')}`);
+      console.log(`⏰ Dans ${Math.floor((closingTimestamp - Date.now()) / 60000)} minutes`);
+    } else {
+      return message.reply('❌ Heure invalide. Format: `21h30`');
+    }
+  }
+}
+    
+    const optionsText = options.map((opt, i) => 
+      `**${i + 1}.** ${opt.name} — Cote: **${opt.odds}x**`
+    ).join('\n');
+
+    const embed = new EmbedBuilder()
+      .setColor('#FFD700')
+      .setTitle('📊 Nouveau Pari')
+      .setDescription(`**${question}**\n\n${optionsText}`)
+      .addFields(
+        { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
+        { name: '📈 Statut', value: '🟢 En cours', inline: true },
+        { name: '💵 Total des mises', value: '0€', inline: true },
+        { name: '👥 Parieurs', value: '0', inline: true }
+      )
+      .setFooter({ text: `Créé par ${message.author.tag}` })
+      .setTimestamp();
+
+    if (closingTime) {
+      const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+        timeZone: 'Europe/Paris',
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
       });
-      await newBet.save();
-      
-      let replyText = `✅ Pari créé avec succès depuis l'API Football !\n🆔 ID du message : \`${betMessage.id}\`\n🆔 Fixture ID : \`${fixtureId}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\`\n_Analysez ce match avec_ \`!analyse ${betMessage.id}\` _ou_ \`!analyse ${fixtureId}\``;
-      
-      if (closingTime) {
-        const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
-          timeZone: 'Europe/Paris',
-          hour: '2-digit', 
-          minute: '2-digit',
-          hour12: false
-        });
-        replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${parisTimeStr}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
-        
-        const timeUntilClosing = closingTimestamp - Date.now();
-        if (timeUntilClosing > 0) {
-          setTimeout(async () => {
-            await closeBetAutomatically(betMessage.id);
-          }, timeUntilClosing);
-          
-          const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
-          if (oneHourBefore > 0) {
-            setTimeout(async () => {
-              await sendReminder(betMessage.id);
-            }, oneHourBefore);
-          }
-        }
-      }
-      
-      // Mentionner le rôle @Parieur
-      const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
-      if (parieurRole) {
-        replyText = `${parieurRole} **Nouveau pari disponible !**\n\n` + replyText;
-      }
-      
-      message.reply(replyText);
-      
-      console.log(`✅ Pari API créé : ${betMessage.id} - ${homeTeam} vs ${awayTeam} (Fixture: ${fixtureId})`);
-      
-    } catch (error) {
-      console.error('❌ Erreur création pari API:', error);
-      return message.reply(
-        '❌ **Erreur lors de la récupération des données.**\n\n' +
-        'Vérifiez le fixtureId ou réessayez plus tard.\n' +
-        `Erreur : ${error.message}`
-      );
-    }
-    
-    return; // Fin du mode API
-  }
-  
-  // ==================== MODE MANUEL (ANCIEN) ====================
-  const question = parts[0];
-  
-  let closingTimeStr = null;
-  let optionsRaw = parts.slice(1);
-  
-  const lastPart = parts[parts.length - 1];
-  if (/^\d{1,2}h\d{0,2}$/i.test(lastPart.trim())) {
-    closingTimeStr = lastPart;
-    optionsRaw = parts.slice(1, -1);
-  }
-
-  if (optionsRaw.length < 2 || optionsRaw.length > 10) {
-    return message.reply('❌ Vous devez avoir entre 2 et 10 options.');
-  }
-
-  const options = [];
-  const odds = [];
-
-  for (const opt of optionsRaw) {
-    if (!opt.includes(':')) {
-      return message.reply('❌ Chaque option doit avoir une cote. Format: `Option:cote`\n\nExemple: `PSG:1.5`');
+      embed.addFields({
+        name: '⏰ Clôture des paris',
+        value: `${parisTimeStr} (<t:${Math.floor(closingTimestamp / 1000)}:R>)`,
+        inline: false
+      });
     }
 
-    const [name, oddsStr] = opt.split(':').map(s => s.trim());
-    const oddsValue = parseFloat(oddsStr);
-
-    if (isNaN(oddsValue) || oddsValue < 1.01) {
-      return message.reply(`❌ La cote pour "${name}" est invalide. Elle doit être >= 1.01`);
-    }
-
-    options.push({ name, odds: oddsValue });
-    odds.push(oddsValue);
-  }
-
-  // Gestion heure de clôture (même code que précédemment)
-  let closingTime = null;
-  let closingTimestamp = null;
-  
-  if (closingTimeStr) {
-    const hoursMatch = closingTimeStr.match(/(\d{1,2})h/i);
-    const minutesMatch = closingTimeStr.match(/h(\d{2})/i);
-    
-    if (hoursMatch) {
-      const targetHour = parseInt(hoursMatch[1]);
-      const targetMinute = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+    const rows = [];
+    for (let i = 0; i < options.length; i += 5) {
+      const row = new ActionRowBuilder();
+      const chunk = options.slice(i, i + 5);
       
-      if (targetHour >= 0 && targetHour < 24 && targetMinute >= 0 && targetMinute < 60) {
-        const closingDate = new Date();
-        closingDate.setHours(targetHour, targetMinute, 0, 0);
-        
-        if (closingDate.getTime() <= Date.now()) {
-          closingDate.setDate(closingDate.getDate() + 1);
-        }
-        
-        closingTimestamp = closingDate.getTime();
-        closingTime = closingDate;
-      }
+      chunk.forEach((opt, index) => {
+        row.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`bet_PLACEHOLDER_${i + index}`)
+            .setLabel(`${opt.name} (${opt.odds}x)`)
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('💰')
+        );
+      });
+      
+      rows.push(row);
     }
-  }
-  
-  const optionsText = options.map((opt, i) => 
-    `**${i + 1}.** ${opt.name} — Cote: **${opt.odds}x**`
-  ).join('\n');
 
-  const embed = new EmbedBuilder()
-    .setColor('#FFD700')
-    .setTitle('📊 Nouveau Pari (Manuel)')
-    .setDescription(`**${question}**\n\n${optionsText}`)
-    .addFields(
-      { name: '💰 Comment parier ?', value: 'Cliquez sur le bouton de votre choix ci-dessous' },
-      { name: '📈 Statut', value: '🟢 En cours', inline: true },
-      { name: '💵 Total des mises', value: '0€', inline: true },
-      { name: '👥 Parieurs', value: '0', inline: true }
-    )
-    .setFooter({ text: `Créé par ${message.author.tag}` })
-    .setTimestamp();
-
-  if (closingTime) {
-    const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
-      timeZone: 'Europe/Paris',
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false
-    });
-    embed.addFields({
-      name: '⏰ Clôture des paris',
-      value: `${parisTimeStr} (<t:${Math.floor(closingTimestamp / 1000)}:R>)`,
-      inline: false
-    });
-  }
-
-  // Créer les boutons (même code)
-  const rows = [];
-  for (let i = 0; i < options.length; i += 5) {
-    const row = new ActionRowBuilder();
-    const chunk = options.slice(i, i + 5);
-    
-    chunk.forEach((opt, index) => {
-      row.addComponents(
+    const adminRow = new ActionRowBuilder()
+      .addComponents(
         new ButtonBuilder()
-          .setCustomId(`bet_PLACEHOLDER_${i + index}`)
-          .setLabel(`${opt.name} (${opt.odds}x)`)
-          .setStyle(ButtonStyle.Primary)
-          .setEmoji('💰')
+          .setCustomId(`cancel_PLACEHOLDER`)
+          .setLabel('Annuler le pari')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('❌')
       );
-    });
-    
-    rows.push(row);
-  }
 
-  const adminRow = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`cancel_PLACEHOLDER`)
-        .setLabel('Annuler le pari')
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('❌')
-    );
+    rows.push(adminRow);
 
-  rows.push(adminRow);
+    const betMessage = await message.channel.send({ embeds: [embed], components: rows });
 
-  const betMessage = await message.channel.send({ embeds: [embed], components: rows });
+    const finalRows = [];
+    for (let i = 0; i < options.length; i += 5) {
+      const row = new ActionRowBuilder();
+      const chunk = options.slice(i, i + 5);
+      
+      chunk.forEach((opt, index) => {
+        row.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`bet_${betMessage.id}_${i + index}`)
+            .setLabel(`${opt.name} (${opt.odds}x)`)
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('💰')
+        );
+      });
+      
+      finalRows.push(row);
+    }
 
-  const finalRows = [];
-  for (let i = 0; i < options.length; i += 5) {
-    const row = new ActionRowBuilder();
-    const chunk = options.slice(i, i + 5);
-    
-    chunk.forEach((opt, index) => {
-      row.addComponents(
+    const finalAdminRow = new ActionRowBuilder()
+      .addComponents(
         new ButtonBuilder()
-          .setCustomId(`bet_${betMessage.id}_${i + index}`)
-          .setLabel(`${opt.name} (${opt.odds}x)`)
-          .setStyle(ButtonStyle.Primary)
-          .setEmoji('💰')
+          .setCustomId(`cancel_${betMessage.id}`)
+          .setLabel('Annuler le pari')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('❌')
       );
+
+    finalRows.push(finalAdminRow);
+
+    await betMessage.edit({ embeds: [embed], components: finalRows });
+
+    const newBet = new Bet({
+      messageId: betMessage.id,
+      question,
+      options,
+      initialOdds: odds,
+      bettors: {},
+      creator: message.author.id,
+      channelId: message.channel.id,
+      totalPool: 0,
+      status: 'open',
+      createdAt: new Date(),
+      closingTime: closingTime,
+      reminderSent: false
     });
+    await newBet.save();
+
+let replyText = `✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``;
     
-    finalRows.push(row);
-  }
-
-  const finalAdminRow = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`cancel_${betMessage.id}`)
-        .setLabel('Annuler le pari')
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('❌')
-    );
-
-  finalRows.push(finalAdminRow);
-
-  await betMessage.edit({ embeds: [embed], components: finalRows });
-
-  // Enregistrer dans la DB (SANS matchData car manuel)
-  const newBet = new Bet({
-    messageId: betMessage.id,
-    question,
-    options,
-    initialOdds: odds,
-    bettors: {},
-    creator: message.author.id,
-    channelId: message.channel.id,
-    totalPool: 0,
-    status: 'open',
-    createdAt: new Date(),
-    closingTime: closingTime,
-    reminderSent: false
-    // Pas de matchData pour les paris manuels
+if (closingTime) {
+  const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
+    timeZone: 'Europe/Paris',
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: false
   });
-  await newBet.save();
-
-  let replyText = `✅ Pari créé avec succès !\n🆔 ID du message : \`${betMessage.id}\`\n\n_Utilisez cet ID pour valider le pari avec_ \`!valider ${betMessage.id} [options]\``;
+  replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${parisTimeStr}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
   
-  if (closingTime) {
-    const parisTimeStr = closingTime.toLocaleString('fr-FR', { 
-      timeZone: 'Europe/Paris',
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false
-    });
-    replyText += `\n\n⏰ Les paris seront automatiquement clôturés à **${parisTimeStr}** (<t:${Math.floor(closingTimestamp / 1000)}:R>)`;
+  const timeUntilClosing = closingTimestamp - Date.now();
+  if (timeUntilClosing > 0) {
+    setTimeout(async () => {
+      await closeBetAutomatically(betMessage.id);
+    }, timeUntilClosing);
     
-    const timeUntilClosing = closingTimestamp - Date.now();
-    if (timeUntilClosing > 0) {
+    const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
+    if (oneHourBefore > 0) {
       setTimeout(async () => {
-        await closeBetAutomatically(betMessage.id);
-      }, timeUntilClosing);
-      
-      const oneHourBefore = timeUntilClosing - (60 * 60 * 1000);
-      if (oneHourBefore > 0) {
-        setTimeout(async () => {
-          await sendReminder(betMessage.id);
-        }, oneHourBefore);
-      }
+        await sendReminder(betMessage.id);
+      }, oneHourBefore);
     }
-  }
-
-  const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
-  if (parieurRole) {
-    replyText = `${parieurRole} **Nouveau pari disponible !**\n\n` + replyText;
-  }
-
-  message.reply(replyText);
-}
-
-if (message.content.startsWith('!equipe')) {
-  const teamName = message.content.slice(8).trim();
-
-  if (!teamName) {
-    return message.reply('❌ Usage : `!equipe [nom de l’équipe]`');
-  }
-
-  try {
-    message.channel.send('🔍 Recherche en cours…');
-
-    const fixtures = await apiFootball.getFixturesByTeam(teamName);
-
-    if (!fixtures || fixtures.length === 0) {
-      return message.reply('❌ Aucun match trouvé.');
-    }
-
-    const lines = fixtures.map(f => {
-      const date = new Date(f.fixture.date).toLocaleString('fr-FR');
-      return `• **${f.teams.home.name} vs ${f.teams.away.name}**\n📅 ${date} | 🏆 ${f.league.name}`;
-    });
-
-    const embed = new EmbedBuilder()
-      .setColor('#1E90FF')
-      .setTitle(`⚽ Prochains matchs – ${teamName}`)
-      .setDescription(lines.join('\n\n'))
-      .setFooter({ text: 'API-Football (test faible charge)' })
-      .setTimestamp();
-
-    message.reply({ embeds: [embed] });
-
-  } catch (error) {
-    console.error('❌ Commande !equipe:', error.response?.status);
-
-    message.reply(
-      `❌ Erreur API (${error.response?.status || 'inconnue'}).\n` +
-      `👉 Test faible charge`
-    );
-  }
-}
-  
-  if (command === '!matchs-du-jour' || command === '!mdj' || command === '!today') {
-  try {
-    message.channel.send('🔍 **Recherche des matchs du jour...**');
-    
-    const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
-    const fixtures = await apiFootball.getFixturesByDate(today);
-    
-    if (!fixtures || fixtures.length === 0) {
-      return message.reply('📭 Aucun match prévu aujourd\'hui dans les ligues principales.');
-    }
-    
-    // Grouper par ligue
-    const byLeague = {};
-    for (const fixture of fixtures) {
-      const leagueKey = `${fixture.league.name} (${fixture.league.country})`;
-      if (!byLeague[leagueKey]) {
-        byLeague[leagueKey] = [];
-      }
-      byLeague[leagueKey].push(fixture);
-    }
-    
-    // Créer l'embed
-    const embed = new EmbedBuilder()
-      .setColor('#1E90FF')
-      .setTitle('⚽ Matchs du Jour')
-      .setDescription(`📅 ${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}\n\n`)
-      .setTimestamp();
-    
-    let matchCount = 0;
-    
-    for (const [league, matches] of Object.entries(byLeague)) {
-      if (matchCount >= 25) break; // Limite Discord : 25 fields max
-      
-      let fieldValue = '';
-      for (const match of matches.slice(0, 5)) { // Max 5 matchs par ligue
-        const time = new Date(match.fixture.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-        fieldValue += `🆔 \`${match.fixture.id}\` | ${time}\n`;
-        fieldValue += `   ${match.teams.home.name} 🆚 ${match.teams.away.name}\n\n`;
-        matchCount++;
-      }
-      
-      embed.addFields({
-        name: `🏆 ${league}`,
-        value: fieldValue || 'Aucun match',
-        inline: false
-      });
-    }
-    
-    embed.setFooter({ text: '💡 Utilisez !creer-pari [fixtureId] | heure pour créer un pari' });
-    
-    message.reply({ embeds: [embed] });
-    
-  } catch (error) {
-    console.error('❌ Erreur !matchs-du-jour:', error);
-    message.reply('❌ Erreur lors de la récupération des matchs du jour.');
   }
 }
 
-// 🔎 RECHERCHER UN MATCH PAR ÉQUIPE
-if (command === '!matchs' || command === '!search-match') {
-  const teamQuery = args.slice(1).join(' ');
-  
-  if (!teamQuery) {
-    return message.reply(
-      '❌ **Format incorrect !**\n\n' +
-      '📋 **Usage :** `!matchs [nom équipe]`\n' +
-      '📌 **Exemple :** `!matchs PSG`\n\n' +
-      '💡 **Astuce :** Utilisez `!matchs-du-jour` pour voir tous les matchs d\'aujourd\'hui'
-    );
-  }
-  
-  try {
-    message.channel.send(`🔍 **Recherche de matchs pour "${teamQuery}"...**`);
-    
-    // Rechercher l'équipe
-    const teams = await apiFootball.searchTeam(teamQuery);
-    
-    if (!teams || teams.length === 0) {
-      return message.reply(`❌ Aucune équipe trouvée pour "${teamQuery}".`);
-    }
-    
-    const team = teams[0];
-    const teamId = team.team.id;
-    const teamName = team.team.name;
-    
-    // Récupérer les prochains matchs
-    const fixtures = await apiFootball.getTeamUpcomingFixtures(teamId, 5);
-    
-    if (!fixtures || fixtures.length === 0) {
-      return message.reply(`📭 Aucun match à venir pour **${teamName}**.`);
-    }
-    
-    // Créer l'embed
-    const embed = new EmbedBuilder()
-      .setColor('#1E90FF')
-      .setTitle(`⚽ Prochains Matchs - ${teamName}`)
-      .setThumbnail(team.team.logo)
-      .setDescription(`📅 Les ${fixtures.length} prochains matchs de **${teamName}** :\n`)
-      .setTimestamp();
-    
-    for (const fixture of fixtures) {
-      const date = new Date(fixture.fixture.date);
-      const dateStr = date.toLocaleDateString('fr-FR', { 
-        weekday: 'short', 
-        day: 'numeric', 
-        month: 'short' 
-      });
-      const timeStr = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-      
-      const isHome = fixture.teams.home.id === teamId;
-      const opponent = isHome ? fixture.teams.away.name : fixture.teams.home.name;
-      const location = isHome ? '🏠 Domicile' : '✈️ Extérieur';
-      
-      embed.addFields({
-        name: `${fixture.teams.home.name} 🆚 ${fixture.teams.away.name}`,
-        value: 
-          `🆔 **ID :** \`${fixture.fixture.id}\`\n` +
-          `📅 **Date :** ${dateStr} à ${timeStr}\n` +
-          `🏆 **Compétition :** ${fixture.league.name}\n` +
-          `📍 **Lieu :** ${location}\n` +
-          `🏟️ **Stade :** ${fixture.fixture.venue.name}`,
-        inline: false
-      });
-    }
-    
-    embed.setFooter({ 
-      text: '💡 Utilisez !creer-pari [fixtureId] | heure pour créer un pari' 
-    });
-    
-    message.reply({ embeds: [embed] });
-    
-  } catch (error) {
-    console.error('❌ Erreur !matchs:', error);
-    message.reply('❌ Erreur lors de la recherche de matchs.');
-  }
+// ⭐ Ajouter la mention @Parieur AVANT le message
+const parieurRole = message.guild.roles.cache.find(role => role.name === 'Parieur');
+if (parieurRole) {
+  replyText = `${parieurRole} **Nouveau pari disponible !**\n\n` + replyText;
 }
+
+message.reply(replyText);
+  }
 
 if (command === '!boost') {
   const member = await message.guild.members.fetch(message.author.id);
