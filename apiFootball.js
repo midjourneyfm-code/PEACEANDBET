@@ -139,7 +139,7 @@ async function getFixturesByDate(date) {
           params: {
             date: date,
             league: leagueId,
-            season: new Date().getFullYear()
+            season: 2025
           }
         });
         
