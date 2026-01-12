@@ -77,7 +77,7 @@ const betSchema = new mongoose.Schema({
   closingTime: Date,
   reminderSent: { type: Boolean, default: false },
   isBoosted: { type: Boolean, default: false },
-  winningOptions: [Number]
+  winningOptions: [Number],
    // ⭐ AJOUT ICI
   matchData: {
     fixtureId: String,
