@@ -1,6 +1,8 @@
 // ==================== MODULE API-FOOTBALL ====================
 // Ajouter ce fichier : apiFootball.js
 
+console.log('🔑 API KEY utilisée:', process.env.apiFootballKey);
+
 const axios = require('axios');
 const config = require('./config.json');
 
