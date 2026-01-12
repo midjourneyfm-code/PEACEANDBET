@@ -119,6 +119,54 @@ async function getTeamForm(teamId, last = 5) {
   }
 }
 
+async function getFixturesByDate(date) {
+  try {
+    console.log(`📅 Récupération des matchs du ${date}...`);
+    
+    // ✅ CORRECTION : Utiliser plusieurs ligues pour avoir plus de résultats
+    const leagues = [
+      61,  // Ligue 1 (France)
+      39,  // Premier League (Angleterre)
+      140, // La Liga (Espagne)
+      78,  // Bundesliga (Allemagne)
+      135, // Serie A (Italie)
+      2,   // Champions League
+      3    // Europa League
+    ];
+    
+    const allFixtures = [];
+    
+    // Récupérer les matchs pour chaque ligue
+    for (const leagueId of leagues) {
+      try {
+        const response = await apiClient.get('/fixtures', {
+          params: {
+            date: date,
+            league: leagueId,
+            season: new Date().getFullYear()
+          }
+        });
+        
+        if (response.data && response.data.response) {
+          console.log(`✅ ${response.data.response.length} matchs trouvés pour la ligue ${leagueId}`);
+          allFixtures.push(...response.data.response);
+        }
+      } catch (err) {
+        console.error(`⚠️ Erreur ligue ${leagueId}:`, err.message);
+        // Continuer avec les autres ligues même si une échoue
+      }
+    }
+    
+    console.log(`✅ Total : ${allFixtures.length} matchs trouvés`);
+    return allFixtures;
+    
+  } catch (error) {
+    console.error('❌ Erreur getFixturesByDate:', error.message);
+    console.error('Stack:', error.stack);
+    throw error;
+  }
+}
+
 /**
  * Obtenir le classement d'une équipe dans sa ligue
  */
