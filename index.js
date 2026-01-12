@@ -1,9 +1,9 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const config = require('./config.json');
+const apiFootball = require('./apiFootball');
 const express = require('express');
 const mongoose = require('mongoose');
 const https = require('https');
-const apiFootball = require('./apiFootball');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
